@@ -12,6 +12,23 @@ STMSharp is a .NET library for lock-free synchronization using Software Transact
 - **Conflict detection:** Automatically detects conflicts in the transaction, ensuring data consistency.
 - **Exponential backoff:** Includes an automatic backoff strategy for retries, enhancing performance in high-contention scenarios.
 
+## What is Software Transactional Memory (STM)?
+Software Transactional Memory (STM) is a concurrency control mechanism that simplifies writing concurrent programs by providing an abstraction similar to database transactions. STM allows developers to work with shared memory without the need for explicit locks, reducing the complexity of concurrent programming.
+
+### Key Concepts of STM:
+- **Transactions:** Operations on shared variables are grouped into transactions. A transaction is a unit of work that must be executed atomically.
+- **Atomicity:** A transaction is executed as a single, indivisible operation. Either all operations within the transaction are completed, or none are, ensuring consistency.
+- **Isolation:** Transactions are isolated from each other, meaning that the operations in one transaction do not interfere with others, even if they are executed concurrently.
+- **Conflict Detection:** STM systems track changes to shared variables and detect conflicts when two or more transactions try to modify the same variable. If a conflict is detected, the system retries the transaction or resolves it according to a conflict resolution strategy.
+- **Composability:** STM transactions can be nested or composed together, making it easier to structure complex operations.
+
+### Benefits of STM:
+- **Simplified concurrency control:** STM eliminates the need for low-level synchronization mechanisms like locks, reducing the potential for deadlocks and race conditions.
+- **Scalability:** STM can scale more effectively than traditional lock-based systems, especially in highly concurrent environments.
+- **Composability and Modularity:** STM makes it easier to compose complex operations from simple ones, which promotes cleaner and more modular code.
+
+In STMSharp, STM is implemented using transactions that read from and write to STM variables. Transactions can be retried automatically using an exponential backoff strategy to handle conflicts, making it easier to work with shared data in concurrent environments.
+
 ## How it works
 STMSharp implements the Software Transactional Memory (STM) pattern, allowing you to perform read and write operations on shared variables inside transactions. Each transaction reads the values of shared variables, applies updates, and commits them if no conflicts are detected. If a conflict occurs, the transaction will be retried with an exponential backoff mechanism, which gradually increases the delay between retries.
 
@@ -26,22 +43,22 @@ Here's a basic example of how to use STMSharp in your project:
 ```csharp
 try
 {
-	// Initialize a shared STM variable
-	var sharedVar = new STMVariable<int>(0);
+   // Initialize a shared STM variable
+   var sharedVar = new STMVariable<int>(0);
 
-	// Perform an atomic transaction to increment the value
-	STMEngine.Atomic(transaction =>
-	{
-		var value = transaction.Read(sharedVar);
-		transaction.Write(sharedVar, value + 1);
-	});
+   // Perform an atomic transaction to increment the value
+   STMEngine.Atomic(transaction =>
+   {
+       var value = transaction.Read(sharedVar);
+       transaction.Write(sharedVar, value + 1);
+   });
 
-	// Perform another atomic transaction
-	STMEngine.Atomic(transaction =>
-	{
-		var value = transaction.Read(sharedVar);
-		transaction.Write(sharedVar, value + 1);
-	});
+   // Perform another atomic transaction
+   STMEngine.Atomic(transaction =>
+   {
+       var value = transaction.Read(sharedVar);
+       transaction.Write(sharedVar, value + 1);
+   });
 }
 catch (InvalidOperationException ex)
 {
