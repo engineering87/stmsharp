@@ -9,7 +9,7 @@ namespace STMSharp.Benchmarking
     class Program
     {
         // Configuration parameters for the benchmark
-        private static int NumberOfThreads = 4;
+        private static int NumberOfThreads = 10;
         private static int NumberOfOperations = 1000;
         private static int BackoffTime = 100;
 
@@ -17,6 +17,8 @@ namespace STMSharp.Benchmarking
         {
             // STM variable to be shared among threads
             var sharedVar = new STMVariable<int>(0);
+
+            Console.WriteLine($"Starting Benchmark");
 
             // Stopwatch to measure the total benchmark time
             var stopwatch = Stopwatch.StartNew();

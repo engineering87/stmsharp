@@ -33,7 +33,6 @@ namespace STMSharp.Core
                 else
                 {
                     // Apply backoff strategy (exponential backoff)
-                    Console.WriteLine($"Retrying in {backoffTime}ms...");
                     Thread.Sleep(backoffTime);
 
                     // Exponential backoff (doubling delay time)
