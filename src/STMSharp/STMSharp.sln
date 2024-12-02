@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "STMSharp", "STMSharp.csproj
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "STMSharp.Tests", "..\STMSharp.Tests\STMSharp.Tests.csproj", "{FE81E058-2B1F-4E28-9CCB-E4BE4F801826}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "STMSharp.Benchmarking", "..\STMSharp.Benchmarking\STMSharp.Benchmarking.csproj", "{D0F9DA58-C600-42E5-BE0F-6997B21A9503}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,10 @@ Global
 		{FE81E058-2B1F-4E28-9CCB-E4BE4F801826}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{FE81E058-2B1F-4E28-9CCB-E4BE4F801826}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{FE81E058-2B1F-4E28-9CCB-E4BE4F801826}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D0F9DA58-C600-42E5-BE0F-6997B21A9503}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D0F9DA58-C600-42E5-BE0F-6997B21A9503}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D0F9DA58-C600-42E5-BE0F-6997B21A9503}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D0F9DA58-C600-42E5-BE0F-6997B21A9503}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

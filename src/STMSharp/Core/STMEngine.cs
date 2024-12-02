@@ -1,12 +1,10 @@
 ﻿// (c) 2024 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
-using STMSharp.Core.Exceptions;
-
 namespace STMSharp.Core
 {
     public class STMEngine
     {
-        private const int MaxAttempts = 5;
+        private const int MaxAttempts = 3;
         private const int InitialBackoffMilliseconds = 100;
 
         /// <summary>
@@ -22,39 +20,26 @@ namespace STMSharp.Core
 
             while (attempt < MaxAttempts)
             {
-                try
-                {
-                    // Execute the action inside the transaction
-                    action(transaction);
+                // Execute the action inside the transaction
+                action(transaction);
 
-                    // Attempt to commit the transaction
-                    transaction.Commit(); // Commit does not return a value, but may throw on failure
-                    break; // Commit successful, exit the loop
+                // Attempt to commit the transaction
+                bool commitSuccess = transaction.Commit();
+                if (commitSuccess)
+                {
+                    // Commit successful, exit the loop
+                    break;
                 }
-                catch (TransactionConflictException ex)
+                else
                 {
-                    // Handle commit failure due to conflict
-                    Console.WriteLine($"Commit failed due to conflict: {ex.Message}");
-
                     // Apply backoff strategy (exponential backoff)
                     Console.WriteLine($"Retrying in {backoffTime}ms...");
-                    System.Threading.Thread.Sleep(backoffTime);
+                    Thread.Sleep(backoffTime);
 
                     // Exponential backoff (doubling delay time)
                     backoffTime *= 2;
                     attempt++;
                 }
-                catch (Exception ex)
-                {
-                    // Handle unexpected exceptions (log or rethrow)
-                    Console.WriteLine($"An unexpected error occurred: {ex.Message}");
-                    throw;
-                }
-            }
-
-            if (attempt == MaxAttempts)
-            {
-                throw new InvalidOperationException("Transaction failed after maximum retry attempts.");
             }
         }
     }

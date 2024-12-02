@@ -13,6 +13,9 @@ namespace STMSharp.Core
         private readonly Dictionary<ISTMVariable<T>, object> _writes = [];
         private readonly Dictionary<ISTMVariable<T>, int> _versions = [];
 
+        public static int ConflictCount { get; private set; } = 0;
+        public static int RetryCount { get; private set; } = 0;
+
         /// <summary>
         /// Reads a value from an STM variable.
         /// </summary>
@@ -67,6 +70,7 @@ namespace STMSharp.Core
                 if (_versions.ContainsKey(variable) && _versions[variable] != newVersion)
                 {
                     // If the version has changed, there is a conflicts
+                    ConflictCount++;
                     return true;
                 }
             }
@@ -78,8 +82,17 @@ namespace STMSharp.Core
         /// <summary>
         /// Commits the transaction and applies the writes to the STM variables.
         /// </summary>
-        public void Commit()
+        public bool Commit()
         {
+            // Check for conflicts before committing
+            if (CheckForConflicts())
+            {
+                RetryCount++;
+
+                // If there's a conflict, return false without committing
+                return false;
+            }
+
             foreach (var entry in _writes)
             {
                 var variable = entry.Key;
@@ -87,6 +100,8 @@ namespace STMSharp.Core
                 // Write the value to the STM variable
                 variable.Write((T)entry.Value);
             }
+
+            return true;
         }
     }
 }
