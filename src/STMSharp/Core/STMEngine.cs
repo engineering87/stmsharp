@@ -12,7 +12,7 @@ namespace STMSharp.Core
         /// </summary>
         /// <typeparam name="T">The type of the STM transaction variable.</typeparam>
         /// <param name="action">The action to execute inside the transaction.</param>
-        public static void Atomic<T>(Action<Transaction<T>> action)
+        public static async Task Atomic<T>(Action<Transaction<T>> action)
         {
             var transaction = new Transaction<T>();  // Specify the generic type T
             int attempt = 0;
@@ -33,7 +33,7 @@ namespace STMSharp.Core
                 else
                 {
                     // Apply backoff strategy (exponential backoff)
-                    Thread.Sleep(backoffTime);
+                    await Task.Delay(backoffTime);
 
                     // Exponential backoff (doubling delay time)
                     backoffTime *= 2;

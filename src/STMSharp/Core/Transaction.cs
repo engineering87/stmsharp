@@ -24,16 +24,17 @@ namespace STMSharp.Core
         public T Read(ISTMVariable<T> variable)
         {
             // If the variable has not been read yet, store its value
-            if (!_reads.ContainsKey(variable))
+            if (!_reads.TryGetValue(variable, out object? value))
             {
+                value = variable.Read();
                 // Read the value from the variable
-                _reads[variable] = variable.Read();
+                _reads[variable] = value;
                 // Store the variable's version at the time of the read
                 _versions[variable] = variable.Version;
             }
 
             // Return the stored value, cast to the correct type
-            return (T)_reads[variable];
+            return (T)value;
         }
 
         /// <summary>
@@ -67,7 +68,7 @@ namespace STMSharp.Core
                 // Access the current version of the variable
                 var newVersion = variable.Version;
 
-                if (_versions.ContainsKey(variable) && _versions[variable] != newVersion)
+                if (_versions.TryGetValue(variable, out int value) && value != newVersion)
                 {
                     // If the version has changed, there is a conflicts
                     ConflictCount++;
