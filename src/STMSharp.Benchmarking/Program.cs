@@ -1,19 +1,45 @@
 ﻿// (c) 2024 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
+using STMSharp.Benchmarking.Config;
 using STMSharp.Core;
 using STMSharp.Core.Interfaces;
 using System.Diagnostics;
+using System.Text.Json;
 
 namespace STMSharp.Benchmarking
 {
     class Program
     {
         // Configuration parameters for the benchmark
-        private static int NumberOfThreads = 10;
-        private static int NumberOfOperations = 10000;
-        private static int BackoffTime = 100;
+        private static readonly BenchmarkConfig Config;
 
-        static async Task Main(string[] args)
+        static Program()
+        {
+            Config = LoadConfiguration("appsettings.json");
+        }
+
+        /// <summary>
+        /// Loads the configuration from a JSON file.
+        /// </summary>
+        private static BenchmarkConfig LoadConfiguration(string filePath)
+        {
+            try
+            {
+                var json = File.ReadAllText(filePath);
+                return JsonSerializer.Deserialize<BenchmarkConfig>(json)
+                    ?? throw new InvalidOperationException("Invalid configuration format.");
+            }
+            catch (Exception ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"Error loading configuration: {ex.Message}");
+                Console.ResetColor();
+                throw;
+            }
+        }
+
+
+        static async Task Main()
         {
             // STM shared for the STM benchmark
             var sharedSTMVar = new STMVariable<int>(0);
@@ -36,7 +62,7 @@ namespace STMSharp.Benchmarking
             Console.WriteLine($"\n{"STM Benchmark completed.".PadLeft(40)}");
             Console.WriteLine($"{"Duration:".PadLeft(30)} {stopwatch.ElapsedMilliseconds} ms");
 
-            double timePerOperation = (double)stopwatch.ElapsedMilliseconds / (NumberOfThreads * NumberOfOperations);
+            double timePerOperation = (double)stopwatch.ElapsedMilliseconds / (Config.NumberOfThreads * Config.NumberOfOperations);
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.WriteLine($"{"Time per operation:".PadLeft(30)} {timePerOperation:F4} ms");
 
@@ -58,7 +84,7 @@ namespace STMSharp.Benchmarking
             // Create a list of tasks to run the transactions concurrently
             var tasks = new List<Task>();
 
-            for (int i = 0; i < NumberOfThreads; i++)
+            for (int i = 0; i < Config.NumberOfThreads; i++)
             {
                 tasks.Add(Task.Run(() => ExecuteTransactions(sharedSTMVar)));
             }
@@ -74,12 +100,13 @@ namespace STMSharp.Benchmarking
         static async Task ExecuteTransactions(ISTMVariable<int> sharedSTMVar)
         {
             // Perform STM transactions for the specified number of operations
-            for (int i = 0; i < NumberOfOperations; i++)
+            for (int i = 0; i < Config.NumberOfOperations; i++)
             {
                 // Execute a transaction using STMEngine with retry mechanism
-                await STMEngine.Atomic<int>((transaction) =>
+                await STMEngine.Atomic<int>(async (transaction) =>
                 {
                     var value = transaction.Read(sharedSTMVar);
+                    await Task.Delay(Config.ProcessingTime); // Simulate some processing time
                     transaction.Write(sharedSTMVar, value + 1);
                 });
             }
@@ -131,9 +158,9 @@ namespace STMSharp.Benchmarking
         static void PrintBenchmarkConfig()
         {
             Console.ForegroundColor = ConsoleColor.Gray;
-            Console.WriteLine($"{"Threads:".PadLeft(30)} {NumberOfThreads}");
-            Console.WriteLine($"{"Operations per Thread:".PadLeft(30)} {NumberOfOperations}");
-            Console.WriteLine($"{"Backoff Time (ms):".PadLeft(30)} {BackoffTime}");
+            Console.WriteLine($"{"Threads:".PadLeft(30)} {Config.NumberOfThreads}");
+            Console.WriteLine($"{"Operations per Thread:".PadLeft(30)} {Config.NumberOfOperations}");
+            Console.WriteLine($"{"Backoff Time (ms):".PadLeft(30)} {Config.BackoffTime}");
             Console.WriteLine(new string('-', 60));
             Console.ResetColor();
         }
