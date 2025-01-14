@@ -23,17 +23,15 @@ namespace STMSharp.Core
         /// <returns>The value of the variable.</returns>
         public T Read(ISTMVariable<T> variable)
         {
-            // If the variable has not been read yet, store its value
+            if (variable == null) throw new ArgumentNullException(nameof(variable));
+
             if (!_reads.TryGetValue(variable, out object? value))
             {
                 value = variable.Read();
-                // Read the value from the variable
                 _reads[variable] = value;
-                // Store the variable's version at the time of the read
                 _versions[variable] = variable.Version;
             }
 
-            // Return the stored value, cast to the correct type
             return (T)value;
         }
 
@@ -44,15 +42,9 @@ namespace STMSharp.Core
         /// <param name="value">The value to write to the variable.</param>
         public void Write(ISTMVariable<T> variable, T value)
         {
-            // Add or update the value in the writes dictionary
-            if (!_writes.ContainsKey(variable))
-            {
-                _writes[variable] = value;
-            }
-            else
-            {
-                _writes[variable] = value;
-            }
+            if (variable == null) throw new ArgumentNullException(nameof(variable));
+
+            _writes[variable] = value;
         }
 
         /// <summary>
@@ -61,22 +53,15 @@ namespace STMSharp.Core
         /// <returns>True if a conflict is detected, otherwise false.</returns>
         public bool CheckForConflicts()
         {
-            foreach (var entry in _writes)
+            foreach (var variable in _writes.Keys)
             {
-                var variable = entry.Key;
-
-                // Access the current version of the variable
-                var newVersion = variable.Version;
-
-                if (_versions.TryGetValue(variable, out int value) && value != newVersion)
+                if (_versions.TryGetValue(variable, out int recordedVersion) &&
+                    variable.Version != recordedVersion)
                 {
-                    // If the version has changed, there is a conflicts
                     ConflictCount++;
                     return true;
                 }
             }
-
-            // No conflict found
             return false;
         }
 

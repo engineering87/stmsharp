@@ -132,5 +132,30 @@ namespace STMSharp.Tests
             // Verify the final result with max attempts
             Assert.Equal(2, sharedVar.Read());
         }
+
+        [Fact]
+        public async Task TestHighContentionWithMultipleTransactionsAsync()
+        {
+            // Initialize shared variable
+            var sharedVar = new STMVariable<int>(0);
+
+            // Number of concurrent transactions
+            const int transactionCount = 10;
+
+            // Create a list of tasks simulating high contention
+            var tasks = Enumerable.Range(0, transactionCount).Select(_ =>
+                STMEngine.Atomic<int>((transaction) =>
+                {
+                    var value = transaction.Read(sharedVar);
+                    transaction.Write(sharedVar, value + 1);
+                })
+            ).ToList();
+
+            // Run all transactions concurrently
+            await Task.WhenAll(tasks);
+
+            // Verify that the final value matches the number of transactions
+            Assert.Equal(transactionCount, sharedVar.Read());
+        }
     }
 }
