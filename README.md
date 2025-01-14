@@ -66,6 +66,22 @@ catch (InvalidOperationException ex)
 }
 ```
 
+## Benchmarking
+This project includes a benchmarking application designed to test and simulate the behavior of the STMSharp library under varying conditions. The benchmark is built to analyze the efficiency and robustness of the STM mechanism. The benchmark parameters are configurable through a JSON file named appsettings.json. This allows centralized and flexible management of the values used for testing.
+
+### Purpose of the Benchmark
+The goal of the benchmark is to measure the performance of the STMSharp library based on:
+- **Number of Threads**: The number of concurrent threads accessing the transactional memory.
+- **Number of Operations**: The number of transactions executed by each thread.
+- **Backoff Time**: The delay applied in case of conflicts, with an exponential backoff strategy.
+
+### Benchmark Results
+At the end of execution, the benchmark provides several statistics:
+- **Total Duration**: The total time taken to complete the benchmark.
+- **Average Time per Operation**: Calculated as the ratio between the total duration and the total number of operations.
+- **Conflicts Resolved**: The total number of conflicts handled by the STM system.
+- **Retries Attempted**: The total number of retry attempts made.
+
 ## Contributing
 Thank you for considering to help out with the source code!
 If you'd like to contribute, please fork, fix, commit and send a pull request for the maintainers to review and merge into the main code base.
