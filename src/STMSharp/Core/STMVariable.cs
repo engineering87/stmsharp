@@ -12,6 +12,10 @@ namespace STMSharp.Core
         private T _value;
         private int _version;
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="STMVariable{T}"/> class with the specified initial value.
+        /// </summary>
+        /// <param name="initialValue"></param>
         public STMVariable(T initialValue)
         {
             _value = initialValue;
