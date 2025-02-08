@@ -1,6 +1,8 @@
 # STMSharp - Software Transactional Memory (STM) for .NET
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Nuget](https://img.shields.io/nuget/v/STMSharp?style=plastic)](https://www.nuget.org/packages/STMSharp)
+![NuGet Downloads](https://img.shields.io/nuget/dt/STMSharp)
 [![issues - stmsharp](https://img.shields.io/github/issues/engineering87/stmsharp)](https://github.com/engineering87/stmsharp/issues)
 [![stars - stmsharp](https://img.shields.io/github/stars/engineering87/stmsharp?style=social)](https://github.com/engineering87/stmsharp)
 
