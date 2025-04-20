@@ -39,12 +39,13 @@ namespace STMSharp.Core
             int maxAttempts = DefaultMaxAttempts,
             int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds)
         {
-            var transaction = new Transaction<T>();  // Specify the generic type T
             int attempt = 0;
             int backoffTime = initialBackoffMilliseconds;
 
             while (attempt < maxAttempts)
             {
+                var transaction = new Transaction<T>();  // Specify the generic type T
+
                 // Execute the action inside the transaction
                 action(transaction);
 

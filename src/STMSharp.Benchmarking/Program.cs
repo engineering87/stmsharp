@@ -38,7 +38,6 @@ namespace STMSharp.Benchmarking
             }
         }
 
-
         static async Task Main()
         {
             // STM shared for the STM benchmark
@@ -69,6 +68,15 @@ namespace STMSharp.Benchmarking
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine($"{"Total conflicts resolved:".PadLeft(30)} {Transaction<int>.ConflictCount}");
             Console.WriteLine($"{"Total retries attempted:".PadLeft(30)} {Transaction<int>.RetryCount}");
+
+            int finalValue = 0;
+            await STMEngine.Atomic<int>((tx) =>
+            {
+                finalValue = tx.Read(sharedSTMVar);
+            });
+
+            Console.WriteLine($"{"Final STM value:".PadLeft(30)} {finalValue}");
+            Console.WriteLine($"{"Expected:".PadLeft(30)} {Config.NumberOfThreads * Config.NumberOfOperations}");
             Console.ResetColor();
 
             // Add a footer to signify the end of the process
@@ -86,7 +94,7 @@ namespace STMSharp.Benchmarking
 
             for (int i = 0; i < Config.NumberOfThreads; i++)
             {
-                tasks.Add(Task.Run(() => ExecuteTransactions(sharedSTMVar)));
+                tasks.Add(Task.Run(async () => await ExecuteTransactions(sharedSTMVar)));
             }
 
             // Wait for all threads to complete
