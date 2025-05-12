@@ -11,5 +11,6 @@ namespace STMSharp.Benchmarking.Config
         public int NumberOfOperations { get; set; }
         public int BackoffTime { get; set; }
         public int ProcessingTime { get; set; }
+        public int MaxAttempts { get; set; }
     }
 }

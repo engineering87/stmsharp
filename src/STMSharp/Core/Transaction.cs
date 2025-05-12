@@ -55,22 +55,43 @@ namespace STMSharp.Core
         }
 
         /// <summary>
-        /// Checks for conflicts: ensures variables' versions are still locked.
+        /// Checks for conflicts on all accessed STM variables (reads & writes)
+        /// by comparing their current version against the version locked at read time.
         /// </summary>
         public bool CheckForConflicts()
         {
-            foreach (var variable in _writes.Keys)
+            foreach (var kvp in _lockedVersions)
             {
-                if (_lockedVersions.TryGetValue(variable, out int lockedVersion) &&
-                    variable.Version != lockedVersion)
+                ISTMVariable<T> variable = kvp.Key;
+                int lockedVersion = kvp.Value;
+
+                if (variable.Version != lockedVersion)
                 {
                     ConflictCount++;
-                    return true; // Conflict detected: the version changed
+                    return true;
                 }
             }
 
             return false;
         }
+
+        /// <summary>
+        /// Checks for conflicts: ensures variables' versions are still locked.
+        /// </summary>
+        //public bool CheckForConflicts()
+        //{
+        //    foreach (var variable in _writes.Keys)
+        //    {
+        //        if (_lockedVersions.TryGetValue(variable, out int lockedVersion) &&
+        //            variable.Version != lockedVersion)
+        //        {
+        //            ConflictCount++;
+        //            return true; // Conflict detected: the version changed
+        //        }
+        //    }
+
+        //    return false;
+        //}
 
         /// <summary>
         /// Attempts to commit the transaction. Returns true if successful.

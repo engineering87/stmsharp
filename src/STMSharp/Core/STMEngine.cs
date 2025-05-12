@@ -28,45 +28,100 @@ namespace STMSharp.Core
         private const int DefaultInitialBackoffMilliseconds = 100;
 
         /// <summary>
-        /// Executes an atomic block of code with retry and backoff strategy in case of conflict.
+        /// Executes a synchronous action within an STM transaction with retry.
         /// </summary>
-        /// <typeparam name="T">The type of the STM transaction variable.</typeparam>
-        /// <param name="action">The action to execute inside the transaction.</param>
-        /// <param name="maxAttempts">The maximum number of retry attempts (default is 3).</param>
-        /// <param name="initialBackoffMilliseconds">The initial backoff time in milliseconds (default is 100).</param>
         public static async Task Atomic<T>(
-            Action<Transaction<T>> action, 
+            Action<Transaction<T>> action,
+            int maxAttempts = DefaultMaxAttempts,
+            int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds)
+        {
+            // Wrap the synchronous action into the asynchronous overload
+            await Atomic<T>(tx =>
+            {
+                action(tx);
+                return Task.CompletedTask;
+            }, maxAttempts, initialBackoffMilliseconds);
+        }
+
+
+        /// <summary>
+        /// Executes an asynchronous function within an STM transaction with retry and backoff.
+        /// </summary>
+        public static async Task Atomic<T>(
+            Func<Transaction<T>, Task> func,
             int maxAttempts = DefaultMaxAttempts,
             int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds)
         {
             int attempt = 0;
             int backoffTime = initialBackoffMilliseconds;
 
+            // Retry loop for transaction attempts
             while (attempt < maxAttempts)
             {
-                var transaction = new Transaction<T>();  // Specify the generic type T
+                // Create a new transaction instance for each attempt
+                var transaction = new Transaction<T>();
 
-                // Execute the action inside the transaction
-                action(transaction);
+                // Execute user-provided transactional logic
+                await func(transaction);
 
-                // Attempt to commit the transaction
-                bool commitSuccess = transaction.Commit();
-                if (commitSuccess)
+                // Attempt to commit: returns true if no conflict detected
+                if (transaction.Commit())
                 {
-                    // Commit successful, exit the loop
-                    break;
+                    // Commit successful, exit method
+                    return;
                 }
-                else
-                {
-                    // Apply backoff strategy (exponential backoff)
-                    await Task.Delay(backoffTime);
 
-                    // Exponential backoff (doubling delay time)
-                    backoffTime *= 2;
-                    attempt++;
-                }
+                // Conflict detected: wait before retrying
+                await Task.Delay(backoffTime);
+                // Exponential backoff for next attempt
+                backoffTime *= 2;
+                attempt++;
             }
+
+            // All attempts failed: throw timeout exception
+            throw new TimeoutException($"STM transaction failed after {maxAttempts} attempts");
         }
+
+        /// <summary>
+        /// Executes an atomic block of code with retry and backoff strategy in case of conflict.
+        /// </summary>
+        /// <typeparam name="T">The type of the STM transaction variable.</typeparam>
+        /// <param name="action">The action to execute inside the transaction.</param>
+        /// <param name="maxAttempts">The maximum number of retry attempts (default is 3).</param>
+        /// <param name="initialBackoffMilliseconds">The initial backoff time in milliseconds (default is 100).</param>
+        //public static async Task Atomic<T>(
+        //    Action<Transaction<T>> action, 
+        //    int maxAttempts = DefaultMaxAttempts,
+        //    int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds)
+        //{
+        //    int attempt = 0;
+        //    int backoffTime = initialBackoffMilliseconds;
+
+        //    while (attempt < maxAttempts)
+        //    {
+        //        var transaction = new Transaction<T>();  // Specify the generic type T
+
+        //        // Execute the action inside the transaction
+        //        action(transaction);
+
+        //        // Attempt to commit the transaction
+        //        bool commitSuccess = transaction.Commit();
+        //        if (commitSuccess)
+        //        {
+        //            // Commit successful, exit the loop
+        //            break;
+        //        }
+        //        else
+        //        {
+        //            // Apply backoff strategy (exponential backoff)
+        //            await Task.Delay(backoffTime);
+
+        //            // Exponential backoff (doubling delay time)
+        //            backoffTime *= 2;
+        //            attempt++;
+        //        }
+        //    }
+        //}
 
         /// <summary>
         /// Overload for synchronous actions.
