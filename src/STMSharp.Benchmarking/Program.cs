@@ -111,12 +111,15 @@ namespace STMSharp.Benchmarking
         {
             try
             {
-                // Perform STM transactions for the specified number of operations
-                await STMEngine.Atomic<int>(tx =>
+                for (int i = 0; i < Config.NumberOfOperations; i++)
                 {
-                    var value = tx.Read(sharedSTMVar);
-                    tx.Write(sharedSTMVar, value + 1);
-                });
+                    // Perform STM transactions for the specified number of operations
+                    await STMEngine.Atomic<int>(tx =>
+                    {
+                        var value = tx.Read(sharedSTMVar);
+                        tx.Write(sharedSTMVar, value + 1);
+                    });
+                }
 
                 await Task.Delay(Config.ProcessingTime);
             }
