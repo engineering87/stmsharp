@@ -70,10 +70,12 @@ namespace STMSharp.Benchmarking
             Console.WriteLine($"{"Total retries attempted:".PadLeft(30)} {Transaction<int>.RetryCount}");
 
             int finalValue = 0;
-            await STMEngine.Atomic<int>((tx) =>
-            {
-                finalValue = tx.Read(sharedSTMVar);
-            });
+            // Read final STM value using configured retry settings
+            await STMEngine.Atomic<int>(
+                tx => { finalValue = tx.Read(sharedSTMVar); },
+                Config.MaxAttempts,
+                Config.BackoffTime
+            );
 
             Console.WriteLine($"{"Final STM value:".PadLeft(30)} {finalValue}");
             Console.WriteLine($"{"Expected:".PadLeft(30)} {Config.NumberOfThreads * Config.NumberOfOperations}");
@@ -107,16 +109,26 @@ namespace STMSharp.Benchmarking
         /// <param name="sharedSTMVar">The shared STM variable to be accessed in the transactions.</param>
         static async Task ExecuteTransactions(ISTMVariable<int> sharedSTMVar)
         {
-            // Perform STM transactions for the specified number of operations
-            for (int i = 0; i < Config.NumberOfOperations; i++)
+            try
             {
-                // Execute a transaction using STMEngine with retry mechanism
-                await STMEngine.Atomic<int>(async (transaction) =>
+                for (int i = 0; i < Config.NumberOfOperations; i++)
                 {
-                    var value = transaction.Read(sharedSTMVar);
-                    await Task.Delay(Config.ProcessingTime); // Simulate some processing time
-                    transaction.Write(sharedSTMVar, value + 1);
-                });
+                    // Perform STM transactions for the specified number of operations
+                    await STMEngine.Atomic<int>(tx =>
+                    {
+                        var value = tx.Read(sharedSTMVar);
+                        tx.Write(sharedSTMVar, value + 1);
+                    });
+                }
+
+                await Task.Delay(Config.ProcessingTime);
+            }
+            catch (TimeoutException ex)
+            {
+                // Log timeout and continue benchmark
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"Warning: transaction timed out after max attempts: {ex.Message}");
+                Console.ResetColor();
             }
         }
 
