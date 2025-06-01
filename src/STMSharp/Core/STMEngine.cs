@@ -43,7 +43,6 @@ namespace STMSharp.Core
             }, maxAttempts, initialBackoffMilliseconds);
         }
 
-
         /// <summary>
         /// Executes an asynchronous function within an STM transaction with retry and backoff.
         /// </summary>
@@ -81,103 +80,5 @@ namespace STMSharp.Core
             // All attempts failed: throw timeout exception
             throw new TimeoutException($"STM transaction failed after {maxAttempts} attempts");
         }
-
-        /// <summary>
-        /// Executes an atomic block of code with retry and backoff strategy in case of conflict.
-        /// </summary>
-        /// <typeparam name="T">The type of the STM transaction variable.</typeparam>
-        /// <param name="action">The action to execute inside the transaction.</param>
-        /// <param name="maxAttempts">The maximum number of retry attempts (default is 3).</param>
-        /// <param name="initialBackoffMilliseconds">The initial backoff time in milliseconds (default is 100).</param>
-        //public static async Task Atomic<T>(
-        //    Action<Transaction<T>> action, 
-        //    int maxAttempts = DefaultMaxAttempts,
-        //    int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds)
-        //{
-        //    int attempt = 0;
-        //    int backoffTime = initialBackoffMilliseconds;
-
-        //    while (attempt < maxAttempts)
-        //    {
-        //        var transaction = new Transaction<T>();  // Specify the generic type T
-
-        //        // Execute the action inside the transaction
-        //        action(transaction);
-
-        //        // Attempt to commit the transaction
-        //        bool commitSuccess = transaction.Commit();
-        //        if (commitSuccess)
-        //        {
-        //            // Commit successful, exit the loop
-        //            break;
-        //        }
-        //        else
-        //        {
-        //            // Apply backoff strategy (exponential backoff)
-        //            await Task.Delay(backoffTime);
-
-        //            // Exponential backoff (doubling delay time)
-        //            backoffTime *= 2;
-        //            attempt++;
-        //        }
-        //    }
-        //}
-
-        /// <summary>
-        /// Overload for synchronous actions.
-        /// </summary>
-        /// <typeparam name="T">The type of the STM transaction variable.</typeparam>
-        /// <param name="action">The action to execute inside the transaction.</param>
-        //public static Task Atomic<T>(Action<Transaction<T>> action)
-        //{
-        //    return Atomic<T>(transaction =>
-        //    {
-        //        action(transaction);
-        //        return Task.CompletedTask;
-        //    });
-        //}
-
-        /// <summary>
-        /// Executes an atomic block of code with retry and backoff strategy in case of conflict.
-        /// Accepts a Func for asynchronous actions.
-        /// </summary>
-        /// <typeparam name="T">The type of the STM transaction variable.</typeparam>
-        /// <param name="func">The func to execute inside the transaction.</param>
-        //public static async Task Atomic<T>(Func<Transaction<T>, Task> func)
-        //{
-        //    var transaction = new Transaction<T>();
-        //    int attempt = 0;
-        //    int backoffTime = InitialBackoffMilliseconds;
-
-        //    while (attempt < MaxAttempts)
-        //    {
-        //        try
-        //        {
-        //            // Execute the action inside the transaction
-        //            await func(transaction);
-
-        //            // Attempt to commit the transaction
-        //            bool commitSuccess = transaction.Commit();
-        //            if (commitSuccess)
-        //            {
-        //                // Commit successful, exit the loop
-        //                break;
-        //            }
-        //            else
-        //            {
-        //                // Apply backoff strategy (exponential backoff)
-        //                await Task.Delay(backoffTime);
-
-        //                // Exponential backoff (doubling delay time)
-        //                backoffTime *= 2;
-        //                attempt++;
-        //            }
-        //        }
-        //        catch
-        //        {
-        //            // Handle exceptions in the action if needed (e.g., rollback logic)
-        //        }
-        //    }
-        //}
     }
 }

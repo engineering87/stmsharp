@@ -76,24 +76,6 @@ namespace STMSharp.Core
         }
 
         /// <summary>
-        /// Checks for conflicts: ensures variables' versions are still locked.
-        /// </summary>
-        //public bool CheckForConflicts()
-        //{
-        //    foreach (var variable in _writes.Keys)
-        //    {
-        //        if (_lockedVersions.TryGetValue(variable, out int lockedVersion) &&
-        //            variable.Version != lockedVersion)
-        //        {
-        //            ConflictCount++;
-        //            return true; // Conflict detected: the version changed
-        //        }
-        //    }
-
-        //    return false;
-        //}
-
-        /// <summary>
         /// Attempts to commit the transaction. Returns true if successful.
         /// </summary>
         public bool Commit()
