@@ -67,6 +67,67 @@ catch (InvalidOperationException ex)
     Console.WriteLine("Transaction failed: " + ex.Message);
 }
 ```
+## 📦 Core Classes
+
+### `ISTMVariable<T>` (interface)
+Represents a shared STM variable within the system.
+
+| Member | Description |
+|--------|-------------|
+| `ReadWithVersion()` | Atomically reads the value and version. |
+| `Write(T value)` | Atomically writes a new value. |
+| `int Version { get; }` | Gets the current version of the variable. |
+| `IncrementVersion()` | Increments the version manually. |
+
+> ⚠️ Intended for internal STM operations only, not exposed to user code directly.
+
+---
+
+### `STMVariable<T>` : `ISTMVariable<T>`
+Concrete implementation of a **thread-safe STM variable** using `Volatile` and `Interlocked`.
+
+| Field/Method | Description |
+|--------------|-------------|
+| `_boxedValue` | Internal boxed value to support both value and reference types. |
+| `Read()` | Simple thread-safe read. |
+| `Write(T value)` | Writes the new value and increments the version. |
+| `ReadWithVersion()` | Returns a consistent snapshot of value and version. |
+| `Version` / `IncrementVersion()` | Handles versioning for conflict detection. |
+
+> ✅ Used as the shared state managed inside transactions.
+
+---
+
+### `Transaction<T>`
+Represents an atomic unit of work. Implements **pessimistic isolation** and conflict detection via version locking.
+
+| Field | Description |
+|-------|-------------|
+| `_reads` | Cache of read values. |
+| `_writes` | Pending writes to apply at commit time. |
+| `_lockedVersions` | Versions locked during reads to check for conflicts. |
+| `Read(...)` | Reads from STM variable and locks its version. |
+| `Write(...)` | Records an intended write to apply later. |
+| `CheckForConflicts()` | Verifies if any STM variable has changed since read. |
+| `Commit()` | Applies writes if no conflicts are detected. |
+| `ConflictCount` / `RetryCount` | Static counters for diagnostics. |
+
+> ♻️ A new transaction is created on each attempt (controlled by `STMEngine`).
+
+---
+
+### `STMEngine`
+Coordinates STM execution with **retry and exponential backoff** strategy.
+
+| Method | Description |
+|--------|-------------|
+| `Atomic<T>(Action<Transaction<T>>)` | Runs a synchronous transactional block. |
+| `Atomic<T>(Func<Transaction<T>, Task>)` | Runs an async transactional block. |
+| `DefaultMaxAttempts` / `DefaultInitialBackoffMilliseconds` | Default retry/backoff configuration. |
+
+> 🔁 Retries the transaction on conflict, doubling delay after each failure.
+
+---
 
 ## Benchmarking
 This project includes a benchmarking application designed to test and simulate the behavior of the STMSharp library under varying conditions. The benchmark is built to analyze the efficiency and robustness of the STM mechanism. The benchmark parameters are configurable through a JSON file named appsettings.json. This allows centralized and flexible management of the values used for testing.
