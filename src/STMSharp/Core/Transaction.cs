@@ -19,8 +19,19 @@ namespace STMSharp.Core
         // Tracks the locked versions of STM variables
         private readonly Dictionary<ISTMVariable<T>, int> _lockedVersions = new();
 
-        public static int ConflictCount { get; private set; } = 0;
-        public static int RetryCount { get; private set; } = 0;
+        // Internal counters for conflicts and retries (thread-safe)
+        private static int _conflictCount = 0;
+        private static int _retryCount = 0;
+
+        /// <summary>
+        /// Gets the number of detected conflicts in a thread-safe manner.
+        /// </summary>
+        public static int ConflictCount => Volatile.Read(ref _conflictCount);
+
+        /// <summary>
+        /// Gets the number of retry attempts in a thread-safe manner.
+        /// </summary>
+        public static int RetryCount => Volatile.Read(ref _retryCount);
 
         /// <summary>
         /// Reads a value from an STM variable. 
@@ -67,7 +78,8 @@ namespace STMSharp.Core
 
                 if (variable.Version != lockedVersion)
                 {
-                    ConflictCount++;
+                    // Increment conflict counter in a thread-safe way
+                    Interlocked.Increment(ref _conflictCount);
                     return true;
                 }
             }
@@ -82,7 +94,8 @@ namespace STMSharp.Core
         {
             if (CheckForConflicts())
             {
-                RetryCount++;
+                // Increment retry count if conflict occurred
+                Interlocked.Increment(ref _retryCount);
                 return false; // Abort due to conflict
             }
 
@@ -107,6 +120,16 @@ namespace STMSharp.Core
             _reads.Clear();
             _writes.Clear();
             _lockedVersions.Clear();
+            ResetCounters();
+        }
+
+        /// <summary>
+        /// Resets the global counters for conflicts and retries.
+        /// </summary>
+        public static void ResetCounters()
+        {
+            Interlocked.Exchange(ref _conflictCount, 0);
+            Interlocked.Exchange(ref _retryCount, 0);
         }
     }
 }
