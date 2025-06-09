@@ -33,14 +33,15 @@ namespace STMSharp.Core
         public static async Task Atomic<T>(
             Action<Transaction<T>> action,
             int maxAttempts = DefaultMaxAttempts,
-            int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds)
+            int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds,
+            CancellationToken cancellationToken = default)
         {
             // Wrap the synchronous action into the asynchronous overload
             await Atomic<T>(tx =>
             {
                 action(tx);
                 return Task.CompletedTask;
-            }, maxAttempts, initialBackoffMilliseconds);
+            }, maxAttempts, initialBackoffMilliseconds, cancellationToken);
         }
 
         /// <summary>
@@ -49,7 +50,8 @@ namespace STMSharp.Core
         public static async Task Atomic<T>(
             Func<Transaction<T>, Task> func,
             int maxAttempts = DefaultMaxAttempts,
-            int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds)
+            int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds,
+            CancellationToken cancellationToken = default)
         {
             int attempt = 0;
             int backoffTime = initialBackoffMilliseconds;
@@ -57,6 +59,9 @@ namespace STMSharp.Core
             // Retry loop for transaction attempts
             while (attempt < maxAttempts)
             {
+                // Check for cancellation request
+                cancellationToken.ThrowIfCancellationRequested();
+
                 // Create a new transaction instance for each attempt
                 var transaction = new Transaction<T>();
 
@@ -71,7 +76,7 @@ namespace STMSharp.Core
                 }
 
                 // Conflict detected: wait before retrying
-                await Task.Delay(backoffTime);
+                await Task.Delay(backoffTime, cancellationToken);
                 // Exponential backoff for next attempt
                 backoffTime *= 2;
                 attempt++;
