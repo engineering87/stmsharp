@@ -1,25 +1,29 @@
 ﻿// (c) 2024 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
+using STMSharp.Core.Backoff;
+using STMSharp.Enum;
+
 namespace STMSharp.Core
 {
     /// <summary>
     /// STMEngine provides methods to execute atomic operations within 
     /// Software Transactional Memory (STM) using a retry and backoff strategy.
-    /// 
+    ///
     /// This class allows for configurable retry attempts and backoff timings, 
     /// enabling robust handling of transaction conflicts in concurrent environments.
-    /// 
+    ///
     /// Key Features:
-    /// - Implements an exponential backoff mechanism to minimize contention.
-    /// - Provides default configurations, with the flexibility to override as needed.
-    /// 
+    /// - Supports multiple backoff algorithms including exponential and jitter-based.
+    /// - Handles automatic retries for transactional conflicts.
+    /// - Allows both synchronous and asynchronous transactional logic.
+    ///
     /// Usage Example:
     /// <code>
     /// await STMEngine.Atomic<int>(transaction =>
     /// {
     ///     var value = transaction.Read(sharedVar);
     ///     transaction.Write(sharedVar, value + 1);
-    /// }, maxAttempts: 5, initialBackoffMilliseconds: 200);
+    /// }, maxAttempts: 5, initialBackoffMilliseconds: 200, backoffType: BackoffType.ExponentialWithJitter);
     /// </code>
     /// </summary>
     public class STMEngine
@@ -27,13 +31,23 @@ namespace STMSharp.Core
         private const int DefaultMaxAttempts = 3;
         private const int DefaultInitialBackoffMilliseconds = 100;
 
+        private const BackoffType DefaultBackoffType = BackoffType.ExponentialWithJitter;
+
         /// <summary>
-        /// Executes a synchronous action within an STM transaction with retry.
+        /// Executes a synchronous transactional action with automatic retries in case of conflict.
         /// </summary>
+        /// <typeparam name="T">The return type of the STM transaction.</typeparam>
+        /// <param name="action">A user-defined synchronous action containing transactional logic.</param>
+        /// <param name="maxAttempts">The maximum number of retry attempts before failing.</param>
+        /// <param name="initialBackoffMilliseconds">The base delay used for calculating backoff between retries.</param>
+        /// <param name="backoffType">The backoff algorithm to apply on conflict (e.g., exponential, jitter, constant).</param>
+        /// <param name="cancellationToken">Token used to cancel the operation externally.</param>
+        /// <returns>A task that completes once the transaction is successfully committed or throws on failure.</returns>
         public static async Task Atomic<T>(
             Action<Transaction<T>> action,
             int maxAttempts = DefaultMaxAttempts,
             int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds,
+            BackoffType backoffType = DefaultBackoffType,
             CancellationToken cancellationToken = default)
         {
             // Wrap the synchronous action into the asynchronous overload
@@ -41,16 +55,24 @@ namespace STMSharp.Core
             {
                 action(tx);
                 return Task.CompletedTask;
-            }, maxAttempts, initialBackoffMilliseconds, cancellationToken);
+            }, maxAttempts, initialBackoffMilliseconds, backoffType, cancellationToken);
         }
 
         /// <summary>
-        /// Executes an asynchronous function within an STM transaction with retry and backoff.
+        /// Executes an asynchronous transactional function with automatic retries in case of conflict.
         /// </summary>
+        /// <typeparam name="T">The return type of the STM transaction.</typeparam>
+        /// <param name="func">A user-defined asynchronous function containing transactional logic.</param>
+        /// <param name="maxAttempts">The maximum number of retry attempts before failing.</param>
+        /// <param name="initialBackoffMilliseconds">The base delay used for calculating backoff between retries.</param>
+        /// <param name="backoffType">The backoff algorithm to apply on conflict (e.g., exponential, jitter, constant).</param>
+        /// <param name="cancellationToken">Token used to cancel the operation externally.</param>
+        /// <returns>A task that completes once the transaction is successfully committed or throws on failure.</returns>
         public static async Task Atomic<T>(
             Func<Transaction<T>, Task> func,
             int maxAttempts = DefaultMaxAttempts,
             int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds,
+            BackoffType backoffType = BackoffType.ExponentialWithJitter,
             CancellationToken cancellationToken = default)
         {
             int attempt = 0;
@@ -76,9 +98,9 @@ namespace STMSharp.Core
                 }
 
                 // Conflict detected: wait before retrying
-                await Task.Delay(backoffTime, cancellationToken);
-                // Exponential backoff for next attempt
-                backoffTime *= 2;
+                int delay = BackoffPolicy.GetDelayMilliseconds(backoffType, attempt, initialBackoffMilliseconds);
+                await Task.Delay(delay, cancellationToken);
+
                 attempt++;
             }
 
