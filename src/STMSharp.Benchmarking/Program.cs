@@ -1,6 +1,7 @@
 ﻿// (c) 2024 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
 using STMSharp.Benchmarking.Config;
+using STMSharp.Benchmarking.Models;
 using STMSharp.Core;
 using STMSharp.Core.Interfaces;
 using System.Diagnostics;
@@ -12,6 +13,8 @@ namespace STMSharp.Benchmarking
     {
         // Configuration parameters for the benchmark
         private static readonly BenchmarkConfig Config;
+        private static int sharedLockValue = 0;
+        private static readonly object lockObj = new();
 
         static Program()
         {
@@ -40,48 +43,49 @@ namespace STMSharp.Benchmarking
 
         static async Task Main()
         {
-            // STM shared for the STM benchmark
-            var sharedSTMVar = new STMVariable<int>(0);
-
             PrintHeader("STMSharp Benchmarking");
 
-            // Print benchmarking configuration
             PrintBenchmarkConfig();
 
-            // Stopwatch to measure the total benchmark time
-            var stopwatch = Stopwatch.StartNew();
+            // STM benchmark
+            var stmVar = new STMVariable<int>(0);
+            var stmWatch = Stopwatch.StartNew();
+            await RunBenchmark(stmVar);
+            stmWatch.Stop();
 
-            // Run the benchmark with concurrent threads
-            await RunBenchmark(sharedSTMVar);
-
-            stopwatch.Stop();
-
-            // Print result summary
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine($"\n{"STM Benchmark completed.".PadLeft(40)}");
-            Console.WriteLine($"{"Duration:".PadLeft(30)} {stopwatch.ElapsedMilliseconds} ms");
-
-            double timePerOperation = (double)stopwatch.ElapsedMilliseconds / (Config.NumberOfThreads * Config.NumberOfOperations);
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine($"{"Time per operation:".PadLeft(30)} {timePerOperation:F4} ms");
-
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine($"{"Total conflicts resolved:".PadLeft(30)} {Transaction<int>.ConflictCount}");
-            Console.WriteLine($"{"Total retries attempted:".PadLeft(30)} {Transaction<int>.RetryCount}");
-
-            int finalValue = 0;
-            // Read final STM value using configured retry settings
+            int finalSTMValue = 0;
             await STMEngine.Atomic<int>(
-                tx => { finalValue = tx.Read(sharedSTMVar); },
+                tx => finalSTMValue = tx.Read(stmVar),
                 Config.MaxAttempts,
                 Config.BackoffTime
             );
 
-            Console.WriteLine($"{"Final STM value:".PadLeft(30)} {finalValue}");
-            Console.WriteLine($"{"Expected:".PadLeft(30)} {Config.NumberOfThreads * Config.NumberOfOperations}");
-            Console.ResetColor();
+            var stmResult = new BenchmarkResult
+            {
+                Mode = "STM",
+                DurationMs = stmWatch.ElapsedMilliseconds,
+                TimePerOperation = (double)stmWatch.ElapsedMilliseconds / (Config.NumberOfThreads * Config.NumberOfOperations),
+                FinalValue = finalSTMValue,
+                ConflictCount = Transaction<int>.ConflictCount,
+                RetryCount = Transaction<int>.RetryCount
+            };
 
-            // Add a footer to signify the end of the process
+            // LOCK benchmark
+            sharedLockValue = 0;
+            var lockWatch = Stopwatch.StartNew();
+            await RunLockBenchmark();
+            lockWatch.Stop();
+
+            var lockResult = new BenchmarkResult
+            {
+                Mode = "LOCK",
+                DurationMs = lockWatch.ElapsedMilliseconds,
+                TimePerOperation = (double)lockWatch.ElapsedMilliseconds / (Config.NumberOfThreads * Config.NumberOfOperations),
+                FinalValue = sharedLockValue
+            };
+
+            PrintResults(stmResult, lockResult);
+
             PrintFooter("Benchmark Results Summary");
         }
 
@@ -130,6 +134,26 @@ namespace STMSharp.Benchmarking
                 Console.WriteLine($"Warning: transaction timed out after max attempts: {ex.Message}");
                 Console.ResetColor();
             }
+        }
+
+        static async Task RunLockBenchmark()
+        {
+            var tasks = new List<Task>();
+            for (int i = 0; i < Config.NumberOfThreads; i++)
+            {
+                tasks.Add(Task.Run(() =>
+                {
+                    for (int j = 0; j < Config.NumberOfOperations; j++)
+                    {
+                        lock (lockObj)
+                        {
+                            sharedLockValue++;
+                        }
+                    }
+                    Thread.Sleep(Config.ProcessingTime);
+                }));
+            }
+            await Task.WhenAll(tasks);
         }
 
         /// <summary>
@@ -183,6 +207,22 @@ namespace STMSharp.Benchmarking
             Console.WriteLine($"{"Backoff Time (ms):".PadLeft(30)} {Config.BackoffTime}");
             Console.WriteLine(new string('-', 60));
             Console.ResetColor();
+        }
+
+        static void PrintResults(BenchmarkResult stm, BenchmarkResult lck)
+        {
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"\n{"RESULT COMPARISON".PadLeft(40)}");
+            Console.ResetColor();
+
+            Console.WriteLine($"\n{"Metric".PadRight(25)} | {"STM".PadRight(15)} | {"LOCK".PadRight(15)}");
+            Console.WriteLine(new string('-', 60));
+            Console.WriteLine($"{"Duration (ms)".PadRight(25)} | {stm.DurationMs.ToString().PadRight(15)} | {lck.DurationMs.ToString().PadRight(15)}");
+            Console.WriteLine($"{"Time per operation".PadRight(25)} | {stm.TimePerOperation:F4} ms".PadRight(15) + $" | {lck.TimePerOperation:F4} ms".PadRight(15));
+            Console.WriteLine($"{"Final Value".PadRight(25)} | {stm.FinalValue.ToString().PadRight(15)} | {lck.FinalValue.ToString().PadRight(15)}");
+            Console.WriteLine($"{"Conflicts Resolved".PadRight(25)} | {stm.ConflictCount.ToString().PadRight(15)} | {"N/A".PadRight(15)}");
+            Console.WriteLine($"{"Retries Attempted".PadRight(25)} | {stm.RetryCount.ToString().PadRight(15)} | {"N/A".PadRight(15)}");
+            Console.WriteLine(new string('-', 60));
         }
     }
 }
