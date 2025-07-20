@@ -16,6 +16,7 @@ namespace STMSharp.Core
     /// - Supports multiple backoff algorithms including exponential and jitter-based.
     /// - Handles automatic retries for transactional conflicts.
     /// - Allows both synchronous and asynchronous transactional logic.
+    /// - Supports read-only transactions to avoid unnecessary writes and improve safety.
     ///
     /// Usage Example:
     /// <code>
@@ -24,6 +25,15 @@ namespace STMSharp.Core
     ///     var value = transaction.Read(sharedVar);
     ///     transaction.Write(sharedVar, value + 1);
     /// }, maxAttempts: 5, initialBackoffMilliseconds: 200, backoffType: BackoffType.ExponentialWithJitter);
+    /// </code>
+    ///
+    /// Read-only usage:
+    /// <code>
+    /// await STMEngine.Atomic<int>(transaction =>
+    /// {
+    ///     var value = transaction.Read(sharedVar);
+    ///     Console.WriteLine(value);
+    /// }, readOnly: true);
     /// </code>
     /// </summary>
     public class STMEngine
@@ -34,20 +44,23 @@ namespace STMSharp.Core
         private const BackoffType DefaultBackoffType = BackoffType.ExponentialWithJitter;
 
         /// <summary>
-        /// Executes a synchronous transactional action with automatic retries in case of conflict.
+        /// Executes a asynchronous transactional action with automatic retries in case of conflict.
         /// </summary>
         /// <typeparam name="T">The return type of the STM transaction.</typeparam>
         /// <param name="action">A user-defined synchronous action containing transactional logic.</param>
         /// <param name="maxAttempts">The maximum number of retry attempts before failing.</param>
         /// <param name="initialBackoffMilliseconds">The base delay used for calculating backoff between retries.</param>
         /// <param name="backoffType">The backoff algorithm to apply on conflict (e.g., exponential, jitter, constant).</param>
+        /// <param name="readOnly">Whether the transaction should be executed in read-only mode (disallows writes).</param>
         /// <param name="cancellationToken">Token used to cancel the operation externally.</param>
         /// <returns>A task that completes once the transaction is successfully committed or throws on failure.</returns>
+
         public static async Task Atomic<T>(
             Action<Transaction<T>> action,
             int maxAttempts = DefaultMaxAttempts,
             int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds,
             BackoffType backoffType = DefaultBackoffType,
+            bool readOnly = false,
             CancellationToken cancellationToken = default)
         {
             // Wrap the synchronous action into the asynchronous overload
@@ -55,7 +68,7 @@ namespace STMSharp.Core
             {
                 action(tx);
                 return Task.CompletedTask;
-            }, maxAttempts, initialBackoffMilliseconds, backoffType, cancellationToken);
+            }, maxAttempts, initialBackoffMilliseconds, backoffType, readOnly, cancellationToken);
         }
 
         /// <summary>
@@ -66,6 +79,7 @@ namespace STMSharp.Core
         /// <param name="maxAttempts">The maximum number of retry attempts before failing.</param>
         /// <param name="initialBackoffMilliseconds">The base delay used for calculating backoff between retries.</param>
         /// <param name="backoffType">The backoff algorithm to apply on conflict (e.g., exponential, jitter, constant).</param>
+        /// <param name="readOnly">Whether the transaction should be executed in read-only mode (disallows writes).</param>
         /// <param name="cancellationToken">Token used to cancel the operation externally.</param>
         /// <returns>A task that completes once the transaction is successfully committed or throws on failure.</returns>
         public static async Task Atomic<T>(
@@ -73,6 +87,7 @@ namespace STMSharp.Core
             int maxAttempts = DefaultMaxAttempts,
             int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds,
             BackoffType backoffType = BackoffType.ExponentialWithJitter,
+            bool readOnly = false,
             CancellationToken cancellationToken = default)
         {
             int attempt = 0;
@@ -85,7 +100,7 @@ namespace STMSharp.Core
                 cancellationToken.ThrowIfCancellationRequested();
 
                 // Create a new transaction instance for each attempt
-                var transaction = new Transaction<T>();
+                var transaction = new Transaction<T>(readOnly);
 
                 // Execute user-provided transactional logic
                 await func(transaction);

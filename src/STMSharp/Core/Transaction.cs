@@ -23,6 +23,8 @@ namespace STMSharp.Core
         private static int _conflictCount = 0;
         private static int _retryCount = 0;
 
+        private readonly bool _isReadOnly;
+
         /// <summary>
         /// Gets the number of detected conflicts in a thread-safe manner.
         /// </summary>
@@ -32,6 +34,11 @@ namespace STMSharp.Core
         /// Gets the number of retry attempts in a thread-safe manner.
         /// </summary>
         public static int RetryCount => Volatile.Read(ref _retryCount);
+
+        public Transaction(bool isReadOnly = false)
+        {
+            _isReadOnly = isReadOnly;
+        }
 
         /// <summary>
         /// Reads a value from an STM variable. 
@@ -99,13 +106,17 @@ namespace STMSharp.Core
                 return false; // Abort due to conflict
             }
 
-            // Commit writes to variables, once confirmed that no conflict occurred
-            foreach (var entry in _writes)
+            // Skip commit phase if the transation is read only
+            if (!_isReadOnly)
             {
-                var variable = entry.Key;
-                var value = (T)entry.Value;
+                // Commit writes to variables, once confirmed that no conflict occurred
+                foreach (var entry in _writes)
+                {
+                    var variable = entry.Key;
+                    var value = (T)entry.Value;
 
-                variable.Write(value); // Apply the write to the STM variable
+                    variable.Write(value); // Apply the write to the STM variable
+                }
             }
 
             Clear();
