@@ -6,7 +6,12 @@ namespace STMSharp.Core.Backoff
 {
     public static class BackoffPolicy
     {
-        private static readonly Random _random = new();
+        private static readonly ThreadLocal<Random> _random = new(() => new Random());
+
+        private static int NextRandom(int max)
+        {
+            return _random.Value!.Next(0, max);
+        }
 
         /// <summary>
         /// Calculates the delay in milliseconds to wait before retrying an operation,
@@ -31,7 +36,7 @@ namespace STMSharp.Core.Backoff
 
                 case BackoffType.ExponentialWithJitter:
                     int max = Math.Min(baseDelay * (1 << attempt), maxDelay);
-                    return _random.Next(0, max);
+                    return NextRandom(max);
 
                 case BackoffType.Linear:
                     return Math.Min(baseDelay * (attempt + 1), maxDelay);
