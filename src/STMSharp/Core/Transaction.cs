@@ -19,8 +19,26 @@ namespace STMSharp.Core
         // Tracks the locked versions of STM variables
         private readonly Dictionary<ISTMVariable<T>, int> _lockedVersions = new();
 
-        public static int ConflictCount { get; private set; } = 0;
-        public static int RetryCount { get; private set; } = 0;
+        // Internal counters for conflicts and retries (thread-safe)
+        private static int _conflictCount = 0;
+        private static int _retryCount = 0;
+
+        private readonly bool _isReadOnly;
+
+        /// <summary>
+        /// Gets the number of detected conflicts in a thread-safe manner.
+        /// </summary>
+        public static int ConflictCount => Volatile.Read(ref _conflictCount);
+
+        /// <summary>
+        /// Gets the number of retry attempts in a thread-safe manner.
+        /// </summary>
+        public static int RetryCount => Volatile.Read(ref _retryCount);
+
+        public Transaction(bool isReadOnly = false)
+        {
+            _isReadOnly = isReadOnly;
+        }
 
         /// <summary>
         /// Reads a value from an STM variable. 
@@ -67,7 +85,8 @@ namespace STMSharp.Core
 
                 if (variable.Version != lockedVersion)
                 {
-                    ConflictCount++;
+                    // Increment conflict counter in a thread-safe way
+                    Interlocked.Increment(ref _conflictCount);
                     return true;
                 }
             }
@@ -76,41 +95,28 @@ namespace STMSharp.Core
         }
 
         /// <summary>
-        /// Checks for conflicts: ensures variables' versions are still locked.
-        /// </summary>
-        //public bool CheckForConflicts()
-        //{
-        //    foreach (var variable in _writes.Keys)
-        //    {
-        //        if (_lockedVersions.TryGetValue(variable, out int lockedVersion) &&
-        //            variable.Version != lockedVersion)
-        //        {
-        //            ConflictCount++;
-        //            return true; // Conflict detected: the version changed
-        //        }
-        //    }
-
-        //    return false;
-        //}
-
-        /// <summary>
         /// Attempts to commit the transaction. Returns true if successful.
         /// </summary>
         public bool Commit()
         {
             if (CheckForConflicts())
             {
-                RetryCount++;
+                // Increment retry count if conflict occurred
+                Interlocked.Increment(ref _retryCount);
                 return false; // Abort due to conflict
             }
 
-            // Commit writes to variables, once confirmed that no conflict occurred
-            foreach (var entry in _writes)
+            // Skip commit phase if the transation is read only
+            if (!_isReadOnly)
             {
-                var variable = entry.Key;
-                var value = (T)entry.Value;
+                // Commit writes to variables, once confirmed that no conflict occurred
+                foreach (var entry in _writes)
+                {
+                    var variable = entry.Key;
+                    var value = (T)entry.Value;
 
-                variable.Write(value); // Apply the write to the STM variable
+                    variable.Write(value); // Apply the write to the STM variable
+                }
             }
 
             Clear();
@@ -125,6 +131,16 @@ namespace STMSharp.Core
             _reads.Clear();
             _writes.Clear();
             _lockedVersions.Clear();
+            ResetCounters();
+        }
+
+        /// <summary>
+        /// Resets the global counters for conflicts and retries.
+        /// </summary>
+        public static void ResetCounters()
+        {
+            Interlocked.Exchange(ref _conflictCount, 0);
+            Interlocked.Exchange(ref _retryCount, 0);
         }
     }
 }

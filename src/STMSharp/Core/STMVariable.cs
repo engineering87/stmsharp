@@ -33,8 +33,12 @@ namespace STMSharp.Core
         /// </summary>
         public void Write(T value)
         {
-            Volatile.Write(ref _boxedValue, value!);
-            Interlocked.Increment(ref _version);
+            var currentValue = (T)Volatile.Read(ref _boxedValue)!;
+            if (!EqualityComparer<T>.Default.Equals(currentValue, value))
+            {
+                Volatile.Write(ref _boxedValue, value!);
+                Interlocked.Increment(ref _version);
+            }
         }
 
         /// <summary>
