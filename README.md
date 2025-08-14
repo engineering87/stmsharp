@@ -68,7 +68,16 @@ catch (InvalidOperationException ex)
 }
 ```
 
-## Benchmarking
+## 📈 Performance Benchmarks
+Detailed performance measurements were conducted using [BenchmarkDotNet](https://benchmarkdotnet.org/) to compare variable access and atomic operations under various backoff strategies.
+
+- **Scope**: Execution time, memory allocations, and GC activity
+- **Operations**: Write/Read (standard), Atomic Write/Read
+- **Strategies**: Exponential, Exponential + Jitter, Linear, Constant
+
+➡️ **[Full benchmark report](docs/benchmarks/benchmarks.md)**
+
+## 📈 Benchmarking
 This project includes a benchmarking application designed to test and simulate the behavior of the STMSharp library under varying conditions. The benchmark is built to analyze the efficiency and robustness of the STM mechanism. The benchmark parameters are configurable through a JSON file named appsettings.json. This allows centralized and flexible management of the values used for testing.
 
 ### Purpose of the Benchmark
