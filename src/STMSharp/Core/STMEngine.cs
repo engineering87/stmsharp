@@ -86,7 +86,7 @@ namespace STMSharp.Core
             Func<Transaction<T>, Task> func,
             int maxAttempts = DefaultMaxAttempts,
             int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds,
-            BackoffType backoffType = BackoffType.ExponentialWithJitter,
+            BackoffType backoffType = DefaultBackoffType,
             bool readOnly = false,
             CancellationToken cancellationToken = default)
         {

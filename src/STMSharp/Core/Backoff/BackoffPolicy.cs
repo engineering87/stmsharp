@@ -29,24 +29,25 @@ namespace STMSharp.Core.Backoff
             int baseDelay = 100, 
             int maxDelay = 2000)
         {
-            switch (type)
+            if (baseDelay <= 0) baseDelay = 1;
+            if (maxDelay <= 0) maxDelay = 1;
+
+            int CapExp(int a)
             {
-                case BackoffType.Exponential:
-                    return Math.Min(baseDelay * (1 << attempt), maxDelay);
-
-                case BackoffType.ExponentialWithJitter:
-                    int max = Math.Min(baseDelay * (1 << attempt), maxDelay);
-                    return NextRandom(max);
-
-                case BackoffType.Linear:
-                    return Math.Min(baseDelay * (attempt + 1), maxDelay);
-
-                case BackoffType.Constant:
-                    return baseDelay;
-
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(type), type, "Unsupported backoff type.");
+                int shift = Math.Min(a, 30); // overflow protection
+                long v = ((long)baseDelay) << shift;
+                v = Math.Min(v, (long)maxDelay);
+                return (int)Math.Max(1, v);
             }
+
+            return type switch
+            {
+                BackoffType.Exponential => CapExp(attempt),
+                BackoffType.ExponentialWithJitter => Random.Shared.Next(0, CapExp(attempt) + 1),
+                BackoffType.Linear => Math.Min(Math.Max(1, baseDelay * (attempt + 1)), maxDelay),
+                BackoffType.Constant => Math.Max(1, baseDelay),
+                _ => throw new ArgumentOutOfRangeException(nameof(type))
+            };
         }
     }
 }
