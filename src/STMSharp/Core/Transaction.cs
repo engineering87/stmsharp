@@ -5,21 +5,25 @@ using STMSharp.Core.Interfaces;
 namespace STMSharp.Core
 {
     /// <summary>
-    /// Represents a Software Transactional Memory transaction.
-    /// Implements pessimistic versioning, blocking variable versions until commit.
+    /// Software Transactional Memory transaction with optimistic validation.
+    /// - Read-your-own-writes: reads observe buffered writes within the same transaction.
+    /// - Write-set validation: variables first seen via Write are included in validation.
+    ///
+    /// NOTE: No write-locks are taken here, so write-write races can still occur.
+    ///       A deterministic write-set locking phase can be added later to prevent lost updates.
     /// </summary>
     public class Transaction<T>
     {
         // Stores values read during the transaction
-        private readonly Dictionary<ISTMVariable<T>, object> _reads = new();
+        private readonly Dictionary<ISTMVariable<T>, T> _reads = [];
 
         // Stores values written during the transaction
-        private readonly Dictionary<ISTMVariable<T>, object> _writes = new();
+        private readonly Dictionary<ISTMVariable<T>, T> _writes = [];
 
         // Tracks the locked versions of STM variables
-        private readonly Dictionary<ISTMVariable<T>, int> _lockedVersions = new();
+        private readonly Dictionary<ISTMVariable<T>, int> _lockedVersions = [];
 
-        // Internal counters for conflicts and retries (thread-safe)
+        // Internal global counters for conflicts and retries (thread-safe)
         private static int _conflictCount = 0;
         private static int _retryCount = 0;
 
@@ -41,35 +45,51 @@ namespace STMSharp.Core
         }
 
         /// <summary>
-        /// Reads a value from an STM variable. 
-        /// Locks the variable version for pessimistic isolation.
+        /// Reads a value from an STM variable.
+        /// - If the variable was written in this transaction, returns the buffered value (read-your-own-writes).
+        /// - Otherwise, reads the current value and captures its version for later conflict detection.
         /// </summary>
         public T Read(ISTMVariable<T> variable)
         {
-            if (variable == null) throw new ArgumentNullException(nameof(variable));
+            ArgumentNullException.ThrowIfNull(variable);
 
-            if (!_reads.TryGetValue(variable, out object? cachedValue))
-            {
-                // Read the value and the version, then lock the version for pessimistic isolation
-                var (value, version) = variable.ReadWithVersion();
+            // 1) Read-your-own-writes
+            if (_writes.TryGetValue(variable, out var pending))
+                return pending;
 
-                _reads[variable] = value!;
-                _lockedVersions[variable] = version; // Lock the version
+            // 2) Cached read
+            if (_reads.TryGetValue(variable, out var cachedValue))
+                return cachedValue;
 
-                return value;
-            }
-
-            return (T)cachedValue!;
+            // 3) First access: take a consistent snapshot and remember its version
+            var (value, version) = variable.ReadWithVersion();
+            _reads[variable] = value;
+            if (!_lockedVersions.ContainsKey(variable))
+                _lockedVersions[variable] = version; // include in validation set
+            return value;
         }
 
         /// <summary>
-        /// Writes a value to the STM variable (deferred until commit).
+        /// Buffers a write to the STM variable (deferred until commit).
+        /// Also ensures the variable is part of the validation set (write-set validation).
         /// </summary>
         public void Write(ISTMVariable<T> variable, T value)
         {
-            if (variable == null) throw new ArgumentNullException(nameof(variable));
+            ArgumentNullException.ThrowIfNull(variable);
 
-            _writes[variable] = value!;
+            // Buffer the write
+            _writes[variable] = value;
+
+            // Ensure subsequent reads in this transaction see the new value
+            _reads[variable] = value;
+
+            // If this variable wasn't observed before, capture its current version
+            // so that CheckForConflicts() also validates this write.
+            if (!_lockedVersions.ContainsKey(variable))
+            {
+                var (_, version) = variable.ReadWithVersion();
+                _lockedVersions[variable] = version;
+            }
         }
 
         /// <summary>
@@ -95,7 +115,12 @@ namespace STMSharp.Core
         }
 
         /// <summary>
-        /// Attempts to commit the transaction. Returns true if successful.
+        /// Attempts to commit the transaction.
+        /// Returns true if validation succeeds and writes are applied (if not read-only).
+        ///
+        /// NOTE: This is still an optimistic commit without write-locks, so concurrent
+        /// write-write races can exist. In a subsequent step we can introduce a
+        /// deterministic write-set locking protocol to eliminate lost updates.
         /// </summary>
         public bool Commit()
         {
@@ -103,17 +128,18 @@ namespace STMSharp.Core
             {
                 // Increment retry count if conflict occurred
                 Interlocked.Increment(ref _retryCount);
+                Clear(); 
                 return false; // Abort due to conflict
             }
 
             // Skip commit phase if the transation is read only
-            if (!_isReadOnly)
+            if (!_isReadOnly && _writes.Count > 0)
             {
                 // Commit writes to variables, once confirmed that no conflict occurred
                 foreach (var entry in _writes)
                 {
                     var variable = entry.Key;
-                    var value = (T)entry.Value;
+                    var value = entry.Value;
 
                     variable.Write(value); // Apply the write to the STM variable
                 }
@@ -131,7 +157,6 @@ namespace STMSharp.Core
             _reads.Clear();
             _writes.Clear();
             _lockedVersions.Clear();
-            ResetCounters();
         }
 
         /// <summary>

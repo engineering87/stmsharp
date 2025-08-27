@@ -1,8 +1,8 @@
 {
   "profiles": {
-    "WSL": {
-      "commandName": "WSL2",
-      "distributionName": ""
+    "MyConsoleApp": {
+      "commandName": "Project",
+      "dotnetRunMessages": true
     }
   }
 }
