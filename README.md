@@ -6,13 +6,15 @@
 [![issues - stmsharp](https://img.shields.io/github/issues/engineering87/stmsharp)](https://github.com/engineering87/stmsharp/issues)
 [![stars - stmsharp](https://img.shields.io/github/stars/engineering87/stmsharp?style=social)](https://github.com/engineering87/stmsharp)
 
-STMSharp is a .NET library for lock-free synchronization using Software Transactional Memory (STM), enabling atomic transactions and efficient multi-threading.
+STMSharp brings Software Transactional Memory to .NET: write your concurrent logic as atomic transactions over shared variables, with optimistic snapshots and a lock-free CAS commit that prevents lost updates under contention.
 
 ## Features
 - **Transaction-based memory model:** Manage and update shared variables without needing locks.
 - **Atomic transactions:** Supports atomicity with retry mechanisms and backoff strategies.
 - **Conflict detection:** Automatically detects conflicts in the transaction, ensuring data consistency.
 - **Exponential backoff:** Includes an automatic backoff strategy for retries, enhancing performance in high-contention scenarios.
+
+⚠️ **Breaking change**: `Version` is now `long` and `ReadWithVersion()` returns `(T Value, long Version)`.
 
 ## What is Software Transactional Memory (STM)?
 Software Transactional Memory (STM) is a concurrency control mechanism that simplifies writing concurrent programs by providing an abstraction similar to database transactions. STM allows developers to work with shared memory without the need for explicit locks, reducing the complexity of concurrent programming.
@@ -31,8 +33,19 @@ Software Transactional Memory (STM) is a concurrency control mechanism that simp
 
 In STMSharp, STM is implemented using transactions that read from and write to STM variables. Transactions can be retried automatically using an exponential backoff strategy to handle conflicts, making it easier to work with shared data in concurrent environments.
 
-## How it works
-STMSharp implements the Software Transactional Memory (STM) pattern, allowing you to perform read and write operations on shared variables inside transactions. Each transaction reads the values of shared variables, applies updates, and commits them if no conflicts are detected. If a conflict occurs, the transaction will be retried with an exponential backoff mechanism, which gradually increases the delay between retries.
+## How it works (in a nutshell)
+- `STMVariable<T>` stores a value and a monotonic version (`long`).
+ -A transaction keeps:
+    - `_reads` (cache, includes read-your-own-writes),
+    - `_writes` (buffered updates),
+    - `_snapshotVersions` (immutable version per first observation).
+- Commit protocol (lock-free):
+    1. Guard: each write must have a snapshot.
+    2. Reserve each write via CAS: `even → odd` (TryAcquireForWrite).
+    3. Re-validate read-only entries: current version must equal the snapshot and be even (not reserved).
+    4. Write & release: apply buffered values and increment version `odd → even`.
+
+This ensures serializability and prevents lost updates without runtime locks.
 
 ### Core Components:
 1. **Transaction<T>:** The main class representing a transaction. It allows reading from and writing to STM variables.
@@ -101,8 +114,8 @@ If you'd like to contribute, please fork, fix, commit and send a pull request fo
  * [Fork the repository](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/working-with-forks/fork-a-repo)
  * [Open an issue](https://github.com/engineering87/stmsharp/issues) if you encounter a bug or have a suggestion for improvements/features
 
-### Licensee
-OpenSharpTrace source code is available under MIT License, see license in the source.
+### License
+STMSharp source code is available under MIT License, see license in the source.
 
 ### Contact
 Please contact at francesco.delre[at]protonmail.com for any details.

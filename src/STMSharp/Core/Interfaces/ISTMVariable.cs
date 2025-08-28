@@ -1,4 +1,4 @@
-﻿// (c) 2024 Francesco Del Re <francesco.delre.87@gmail.com>
+﻿// (c) 2024-2025 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
 
 namespace STMSharp.Core.Interfaces
@@ -13,7 +13,7 @@ namespace STMSharp.Core.Interfaces
         /// Reads the current value and its version atomically.
         /// </summary>
         /// <returns>A tuple containing the value and its version.</returns>
-        (T Value, int Version) ReadWithVersion();
+        (T Value, long Version) ReadWithVersion();
 
         /// <summary>
         /// Writes a new value atomically to the STM variable.
@@ -24,7 +24,7 @@ namespace STMSharp.Core.Interfaces
         /// <summary>
         /// Gets the current version of the variable.
         /// </summary>
-        int Version { get; }
+        long Version { get; }
 
         /// <summary>
         /// Increments the version of the variable.

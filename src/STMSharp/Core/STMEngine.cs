@@ -91,7 +91,6 @@ namespace STMSharp.Core
             CancellationToken cancellationToken = default)
         {
             int attempt = 0;
-            int backoffTime = initialBackoffMilliseconds;
 
             // Retry loop for transaction attempts
             while (attempt < maxAttempts)
