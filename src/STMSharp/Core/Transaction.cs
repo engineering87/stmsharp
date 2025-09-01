@@ -1,6 +1,7 @@
 ﻿// (c) 2024-2025 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
 using STMSharp.Core.Interfaces;
+using System.Runtime.CompilerServices;
 
 namespace STMSharp.Core
 {
@@ -159,9 +160,12 @@ namespace STMSharp.Core
                 }
             }
 
-            // 1) Reserve all write-set vars using their own snapshot versions.
+            // 1) Reserve all write-set variables using a stable ordering
             //    Drive strictly by the write-set to avoid any set/key drift.
-            var acquired = new List<STMVariable<T>>(_writes.Count);
+            var writeKeys = _writes.Keys
+                .OrderBy(k => RuntimeHelpers.GetHashCode(k))
+                .ToArray();
+            var acquired = new List<STMVariable<T>>(writeKeys.Length);
 
             foreach (var w in _writes.Keys)
             {

@@ -17,7 +17,7 @@ namespace STMSharp.Core
     /// - If T is a mutable reference type, external mutations that bypass Write(...) can break isolation
     ///   because the version won't change. Prefer immutable types or treat T as a value.
     /// </summary>
-    public class STMVariable<T> : ISTMVariable<T>
+    public sealed class STMVariable<T> : ISTMVariable<T>
     {
         // Boxed value to support both value types and reference types
         private object _boxedValue;
