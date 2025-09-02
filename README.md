@@ -6,7 +6,7 @@
 [![issues - stmsharp](https://img.shields.io/github/issues/engineering87/stmsharp)](https://github.com/engineering87/stmsharp/issues)
 [![stars - stmsharp](https://img.shields.io/github/stars/engineering87/stmsharp?style=social)](https://github.com/engineering87/stmsharp)
 
-STMSharp brings Software Transactional Memory to .NET: write your concurrent logic as atomic transactions over shared variables, with optimistic snapshots and a lock-free CAS commit that prevents lost updates under contention.
+**STMSharp** brings **Software Transactional Memory** to .NET: write your concurrent logic as atomic transactions over shared variables, with optimistic snapshots and a lock-free CAS commit that prevents lost updates under contention.
 
 ## Features
 - **Transaction-based memory model:** Manage and update shared variables without needing locks.
@@ -19,14 +19,14 @@ STMSharp brings Software Transactional Memory to .NET: write your concurrent log
 ## What is Software Transactional Memory (STM)?
 Software Transactional Memory (STM) is a concurrency control mechanism that simplifies writing concurrent programs by providing an abstraction similar to database transactions. STM allows developers to work with shared memory without the need for explicit locks, reducing the complexity of concurrent programming.
 
-### Key Concepts of STM:
+## Key Concepts of STM:
 - **Transactions:** Operations on shared variables are grouped into transactions. A transaction is a unit of work that must be executed atomically.
 - **Atomicity:** A transaction is executed as a single, indivisible operation. Either all operations within the transaction are completed, or none are, ensuring consistency.
 - **Isolation:** Transactions are isolated from each other, meaning that the operations in one transaction do not interfere with others, even if they are executed concurrently.
 - **Conflict Detection:** STM systems track changes to shared variables and detect conflicts when two or more transactions try to modify the same variable. If a conflict is detected, the system retries the transaction or resolves it according to a conflict resolution strategy.
 - **Composability:** STM transactions can be nested or composed together, making it easier to structure complex operations.
 
-### Benefits of STM:
+## Benefits of STM:
 - **Simplified concurrency control:** STM eliminates the need for low-level synchronization mechanisms like locks, reducing the potential for deadlocks and race conditions.
 - **Scalability:** STM can scale more effectively than traditional lock-based systems, especially in highly concurrent environments.
 - **Composability and Modularity:** STM makes it easier to compose complex operations from simple ones, which promotes cleaner and more modular code.
@@ -47,12 +47,38 @@ In STMSharp, STM is implemented using transactions that read from and write to S
 
 This ensures serializability and prevents lost updates without runtime locks.
 
-### Core Components:
+## Core Components:
 1. **Transaction<T>:** The main class representing a transaction. It allows reading from and writing to STM variables.
 2. **STMVariable<T>:** A type that encapsulates the shared data and supports STM operations (read/write).
 3. **STMEngine:** Provides static methods for managing transactions and conflict resolution.
 
-### How to use it
+## CAS & the internal protocol
+STMSharp uses an even/odd version scheme and Compare-And-Exchange (CAS) to coordinate writers:
+- **Invariants**
+    - Even version ⇒ variable is free (no writer holds a reservation).
+    - Odd version ⇒ variable is reserved by some writer during a commit attempt.
+    - Only the transactional path mutates state; non-transactional writes are not exposed.
+- **Reserve (CAS)**
+    ```csharp
+    // success only if current == snapshotVersion (even)
+    // sets version to snapshotVersion + 1 (odd), meaning "reserved"
+    Interlocked.CompareExchange(ref version, snapshotVersion + 1, snapshotVersion);
+    ```
+- **Revalidation**
+    - For each read-set entry: `currentVersion == snapshotVersion` and `(currentVersion & 1) == 0`.
+    - For each write-set entry: already reserved by the current commit; skip.
+- **Write & release**
+    - Write the new value, then `Interlocked.Increment(ref version)` to turn `odd → even` (commit complete).
+    - On abort, `ReleaseAfterAbort()` also increments once to revert `odd → even`.
+- **Deterministic ordering**
+    - All reservations over the write-set are attempted in a stable order (based on reference identity) to reduce livelock under contention.
+    - On failure, only the already acquired reservations are released, in reverse order.
+- **Snapshots**
+    - The first observation of a variable (read or write-first) captures an immutable `(value, version)` pair used both for validation and reservation.
+- **Why no non-transactional writes?**
+    - To preserve the invariants and prevent out-of-band mutations from violating the even/odd protocol, `ISTMVariable<T>` exposes only `ReadWithVersion()` and `Version`. Writes occur exclusively via the transactional commit path.
+
+## How to use it
 Here's a basic example of how to use STMSharp in your project:
 
 ```csharp
@@ -114,8 +140,8 @@ If you'd like to contribute, please fork, fix, commit and send a pull request fo
  * [Fork the repository](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/working-with-forks/fork-a-repo)
  * [Open an issue](https://github.com/engineering87/stmsharp/issues) if you encounter a bug or have a suggestion for improvements/features
 
-### License
+## License
 STMSharp source code is available under MIT License, see license in the source.
 
-### Contact
+## Contact
 Please contact at francesco.delre[at]protonmail.com for any details.
