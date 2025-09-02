@@ -6,13 +6,6 @@ namespace STMSharp.Core.Backoff
 {
     public static class BackoffPolicy
     {
-        private static readonly ThreadLocal<Random> _random = new(() => new Random());
-
-        private static int NextRandom(int max)
-        {
-            return _random.Value!.Next(0, max);
-        }
-
         /// <summary>
         /// Calculates the delay in milliseconds to wait before retrying an operation,
         /// based on the specified backoff algorithm and attempt count.
@@ -24,28 +17,28 @@ namespace STMSharp.Core.Backoff
         /// <returns>The delay in milliseconds to wait before the next retry.</returns>
         /// <exception cref="ArgumentOutOfRangeException">Thrown if an unsupported backoff type is specified.</exception>
         public static int GetDelayMilliseconds(
-            BackoffType type, 
-            int attempt, 
-            int baseDelay = 100, 
+            BackoffType type,
+            int attempt,
+            int baseDelay = 100,
             int maxDelay = 2000)
         {
-            if (baseDelay <= 0) baseDelay = 1;
-            if (maxDelay <= 0) maxDelay = 1;
+            attempt = Math.Max(0, attempt);
+            baseDelay = Math.Max(1, baseDelay);
+            maxDelay = Math.Max(1, maxDelay);
 
             int CapExp(int a)
             {
-                int shift = Math.Min(a, 30); // overflow protection
-                long v = ((long)baseDelay) << shift;
-                v = Math.Min(v, (long)maxDelay);
-                return (int)Math.Max(1, v);
+                int shift = Math.Min(a, 30); // prevent overflow
+                long value = ((long)baseDelay) << shift;
+                return (int)Math.Clamp(value, 1, maxDelay);
             }
 
             return type switch
             {
                 BackoffType.Exponential => CapExp(attempt),
                 BackoffType.ExponentialWithJitter => Random.Shared.Next(0, CapExp(attempt) + 1),
-                BackoffType.Linear => Math.Min(Math.Max(1, baseDelay * (attempt + 1)), maxDelay),
-                BackoffType.Constant => Math.Max(1, baseDelay),
+                BackoffType.Linear => Math.Min(baseDelay * (attempt + 1), maxDelay),
+                BackoffType.Constant => baseDelay,
                 _ => throw new ArgumentOutOfRangeException(nameof(type))
             };
         }

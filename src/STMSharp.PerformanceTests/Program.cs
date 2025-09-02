@@ -1,5 +1,9 @@
 ﻿// (c) 2025 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using BenchmarkDotNet.Running;
 using STMSharp.PerformanceTests.Benchmarks;
 
@@ -7,40 +11,75 @@ namespace STMSharp.PerformanceTests
 {
     public class Program
     {
-        private static readonly Dictionary<object, (double write, double read)> _backoffTable = new();
+        // Accumulates mean times (ns) for AtomicWrite/AtomicReadOnly grouped by Backoff
+        private static readonly Dictionary<string, (double? write, double? read)> _backoffTable = new();
 
         public static void Main(string[] args)
         {
-            var summary = BenchmarkRunner.Run<STMPerformanceBenchmark>();
-
-            Console.WriteLine("\nAverage Time Summary for Atomic Operations by Backoff Type:");
-            Console.WriteLine("| Backoff Type         | AtomicWrite (ns) | AtomicReadOnly (ns) |");
-            Console.WriteLine("|-------------------- |----------------:|-------------------:|");
-
-            foreach (var report in summary.Reports)
+            // Run multiple benchmark classes in a single process invocation.
+            // Add or remove types here as your suite evolves.
+            var summaries = BenchmarkSwitcher.FromTypes(new[]
             {
-                var methodName = report.BenchmarkCase.Descriptor.WorkloadMethod.Name;
-                if (methodName != "AtomicWrite" && methodName != "AtomicReadOnly")
-                    continue;
+                typeof(STMPerformanceBenchmark),
+            }).Run(args);
 
-                var backoff = report.BenchmarkCase.Parameters["Backoff"];
-                var mean = report.ResultStatistics.Mean;
+            // Aggregate results across all summaries
+            foreach (var summary in summaries)
+            {
+                foreach (var report in summary.Reports)
+                {
+                    // Skip if no stats (e.g., failed run)
+                    var stats = report.ResultStatistics;
+                    if (stats is null) continue;
 
-                if (!_backoffTable.ContainsKey(backoff))
-                    _backoffTable[backoff] = (0, 0);
+                    var methodName = report.BenchmarkCase.Descriptor.WorkloadMethod?.Name ?? string.Empty;
 
-                var entry = _backoffTable[backoff];
-                if (methodName == "AtomicWrite")
-                    _backoffTable[backoff] = (mean, entry.read);
-                else
-                    _backoffTable[backoff] = (entry.write, mean);
+                    // We only aggregate entries that expose a "Backoff" parameter
+                    var backoffParam = report.BenchmarkCase.Parameters.Items
+                        .FirstOrDefault(p => string.Equals(p.Name, "Backoff", StringComparison.Ordinal));
+
+                    if (backoffParam is null)
+                        continue;
+
+                    var backoffKey = backoffParam.Value?.ToString() ?? "(null)";
+
+                    // Track only AtomicWrite / AtomicReadOnly to keep the table focused
+                    if (!string.Equals(methodName, "AtomicWrite", StringComparison.Ordinal) &&
+                        !string.Equals(methodName, "AtomicReadOnly", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    if (!_backoffTable.TryGetValue(backoffKey, out var entry))
+                        entry = (null, null);
+
+                    var meanNs = stats.Mean; // BenchmarkDotNet reports means in nanoseconds
+
+                    if (string.Equals(methodName, "AtomicWrite", StringComparison.Ordinal))
+                        entry = (meanNs, entry.read);
+                    else // AtomicReadOnly
+                        entry = (entry.write, meanNs);
+
+                    _backoffTable[backoffKey] = entry;
+                }
             }
 
-            var sorted = _backoffTable.OrderBy(kvp => kvp.Value.write);
+            // Pretty-print table (sorted by AtomicWrite mean when available)
+            Console.WriteLine();
+            Console.WriteLine("Average Time Summary for Atomic Operations by Backoff Type");
+            Console.WriteLine("| Backoff Type               | AtomicWrite (ns) | AtomicReadOnly (ns) |");
+            Console.WriteLine("|----------------------------|-----------------:|--------------------:|");
+
+            var sorted = _backoffTable
+                .OrderBy(kvp => kvp.Value.write ?? double.MaxValue)
+                .ThenBy(kvp => kvp.Key, StringComparer.Ordinal);
 
             foreach (var kvp in sorted)
             {
-                Console.WriteLine($"| {kvp.Key,-18} | {kvp.Value.write,16:F2} | {kvp.Value.read,18:F2} |");
+                var key = kvp.Key.PadRight(26);
+                var write = kvp.Value.write.HasValue ? kvp.Value.write.Value.ToString("F2") : "n/a";
+                var read = kvp.Value.read.HasValue ? kvp.Value.read.Value.ToString("F2") : "n/a";
+                Console.WriteLine($"| {key} | {write,16} | {read,19} |");
             }
         }
     }
