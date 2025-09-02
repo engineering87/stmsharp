@@ -16,19 +16,8 @@ namespace STMSharp.Core.Interfaces
         (T Value, long Version) ReadWithVersion();
 
         /// <summary>
-        /// Writes a new value atomically to the STM variable.
-        /// </summary>
-        /// <param name="value">The new value to write.</param>
-        void Write(T value);
-
-        /// <summary>
         /// Gets the current version of the variable.
         /// </summary>
         long Version { get; }
-
-        /// <summary>
-        /// Increments the version of the variable.
-        /// </summary>
-        void IncrementVersion();
     }
 }

@@ -132,15 +132,35 @@ namespace STMSharp.Core
         /// 2) Re-validate the entire observed snapshot (read- and write-sets).
         /// 3) Apply buffered writes and release reservations by advancing version again.
         /// </summary>
+        /// <summary>
+        /// Attempts to commit the transaction.
+        /// Returns true if validation succeeds and (for non read-only) writes are applied.
+        ///
+        /// Lock-free CAS protocol (even/odd version scheme):
+        /// - Even version = free (unreserved); Odd version = reserved by some writer.
+        /// - Reserve: CAS from snapshotVersion (even) -> snapshotVersion + 1 (odd).
+        /// - Commit: write the value, then increment version to make it even again.
+        /// 
+        /// Steps:
+        /// 0) Defensive: ensure every write-set variable has a captured snapshot version.
+        /// 1) Reserve all write-set variables in a deterministic order (prevents livelock).
+        /// 2) Re-validate the entire observed snapshot (read-set + write-set).
+        /// 3) Apply buffered writes and release reservations (advance version again).
+        /// 
+        /// Notes:
+        /// - Read-only transactions (or no writes) only validate the snapshot.
+        /// - On any failure, reservations acquired so far are released in reverse order,
+        ///   counters are updated, state is cleared, and false is returned.
+        /// - An unexpected exception triggers best-effort release + Clear() and is rethrown.
+        /// </summary>
         public bool Commit()
         {
-            // Fast path: read-only or no writes → snapshot validation only
+            // Fast path: read-only or no writes -> snapshot validation only.
             if (_isReadOnly || _writes.Count == 0)
             {
                 if (CheckForConflicts())
                 {
-                    Interlocked.Increment(ref _retryCount);
-                    // CheckForConflicts() already bumped _conflictCount
+                    Interlocked.Increment(ref _retryCount);   // CheckForConflicts already bumps _conflictCount.
                     Clear();
                     return false;
                 }
@@ -148,7 +168,8 @@ namespace STMSharp.Core
                 return true;
             }
 
-            // 0) Defensive: every write must have a snapshot captured at first observation
+            // 0) Defensive: every variable in the write-set must have a snapshot captured
+            //    at first observation (either via Read or Write).
             foreach (var w in _writes.Keys)
             {
                 if (!_snapshotVersions.ContainsKey(w))
@@ -160,76 +181,82 @@ namespace STMSharp.Core
                 }
             }
 
-            // 1) Reserve all write-set variables using a stable ordering
-            //    Drive strictly by the write-set to avoid any set/key drift.
+            // Use a deterministic order for acquisition to reduce livelock and ensure progress.
             var writeKeys = _writes.Keys
-                .OrderBy(k => RuntimeHelpers.GetHashCode(k))
+                .OrderBy(RuntimeHelpers.GetHashCode) // stable ordering by object identity
                 .ToArray();
+
             var acquired = new List<STMVariable<T>>(writeKeys.Length);
 
-            foreach (var w in _writes.Keys)
+            try
             {
-                var snapVersion = _snapshotVersions[w];
-
-                // Must be the concrete STMVariable<T> to use CAS helpers
-                if (w is not STMVariable<T> concrete)
+                // 1) Reserve all write-set variables (CAS version from even -> odd based on immutable snapshot).
+                foreach (var w in writeKeys)
                 {
-                    Interlocked.Increment(ref _retryCount);
-                    Interlocked.Increment(ref _conflictCount);
-                    Clear();
-                    return false;
+                    var snapVersion = _snapshotVersions[w];
+
+                    // We need the concrete type to access CAS helpers.
+                    if (w is not STMVariable<T> concrete || !concrete.TryAcquireForWrite(snapVersion))
+                    {
+                        // Release any previously acquired reservations (reverse order).
+                        for (int i = acquired.Count - 1; i >= 0; i--)
+                            acquired[i].ReleaseAfterAbort();
+
+                        Interlocked.Increment(ref _retryCount);
+                        Interlocked.Increment(ref _conflictCount);
+                        Clear();
+                        return false;
+                    }
+
+                    acquired.Add(concrete);
                 }
 
-                // Try to reserve according to the immutable snapshot
-                if (!concrete.TryAcquireForWrite(snapVersion))
+                // 2) Re-validate the entire observed snapshot (read-set + write-set).
+                //    - For read-set entries: the current version must still equal the snapshot (and must be even).
+                //    - For write-set entries: skip; they're reserved by us (currently odd).
+                foreach (var kvp in _snapshotVersions)
                 {
-                    // Release any prior reservations and abort
-                    foreach (STMVariable<T> c in acquired)
-                        c.ReleaseAfterAbort();
+                    var variable = kvp.Key;
+                    var snapVersion = kvp.Value;
 
-                    Interlocked.Increment(ref _retryCount);
-                    Interlocked.Increment(ref _conflictCount);
-                    Clear();
-                    return false;
+                    if (_writes.ContainsKey(variable))
+                        continue; // reserved by us
+
+                    var curVersion = variable.Version;
+
+                    // If version changed OR is currently odd (reserved by someone else), abort.
+                    if (curVersion != snapVersion || (curVersion & 1L) != 0)
+                    {
+                        for (int i = acquired.Count - 1; i >= 0; i--)
+                            acquired[i].ReleaseAfterAbort();
+
+                        Interlocked.Increment(ref _retryCount);
+                        Interlocked.Increment(ref _conflictCount);
+                        Clear();
+                        return false;
+                    }
                 }
 
-                acquired.Add(concrete);
-            }
-
-            // 2) Re-validate the entire observed snapshot (read-set + write-set).
-            foreach (var kvp in _snapshotVersions)
-            {
-                var variable = kvp.Key;
-                var snapVersion = kvp.Value;
-
-                if (_writes.ContainsKey(variable))
-                    continue; // write-set entries are already reserved by us
-
-                // Must still equal the snapshot and must not be reserved by someone else
-                var cur = variable.Version;
-                if (cur != snapVersion || (cur & 1) != 0)
+                // 3) Apply buffered writes and release reservations.
+                //    WriteAndRelease updates the value and advances version (odd -> even).
+                foreach (var w in writeKeys)
                 {
-                    foreach (STMVariable<T> c in acquired)
-                        c.ReleaseAfterAbort();
-
-                    Interlocked.Increment(ref _retryCount);
-                    Interlocked.Increment(ref _conflictCount);
-                    Clear();
-                    return false;
+                    ((STMVariable<T>)w).WriteAndRelease(_writes[w]);
                 }
-            }
 
-            // 3) Apply writes and release reservations (advance version again)
-            foreach (var kvp in _writes)
+                Clear();
+                return true;
+            }
+            catch
             {
-                var variable = kvp.Key;
-                var value = kvp.Value;
-
-                ((STMVariable<T>)variable).WriteAndRelease(value);
+                // Best-effort release of any reservations if something unexpected happens.
+                for (int i = acquired.Count - 1; i >= 0; i--)
+                {
+                    try { acquired[i].ReleaseAfterAbort(); } catch { /* swallow */ }
+                }
+                Clear();
+                throw;
             }
-
-            Clear();
-            return true;
         }
 
         /// <summary>
