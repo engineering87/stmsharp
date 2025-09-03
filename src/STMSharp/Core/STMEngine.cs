@@ -44,17 +44,22 @@ namespace STMSharp.Core
         private const BackoffType DefaultBackoffType = BackoffType.ExponentialWithJitter;
 
         /// <summary>
-        /// Executes a asynchronous transactional action with automatic retries in case of conflict.
+        /// Executes an asynchronous transactional action with automatic retries in case of conflict.
         /// </summary>
-        /// <typeparam name="T">The return type of the STM transaction.</typeparam>
+        /// <typeparam name="T">
+        /// The type of STM variables involved in the transaction (i.e., Transaction&lt;T&gt;).
+        /// This is not a return type; the method completes when the transaction commits or throws on failure.
+        /// </typeparam>
         /// <param name="action">A user-defined synchronous action containing transactional logic.</param>
         /// <param name="maxAttempts">The maximum number of retry attempts before failing.</param>
         /// <param name="initialBackoffMilliseconds">The base delay used for calculating backoff between retries.</param>
         /// <param name="backoffType">The backoff algorithm to apply on conflict (e.g., exponential, jitter, constant).</param>
         /// <param name="readOnly">Whether the transaction should be executed in read-only mode (disallows writes).</param>
         /// <param name="cancellationToken">Token used to cancel the operation externally.</param>
-        /// <returns>A task that completes once the transaction is successfully committed or throws on failure.</returns>
-
+        /// <returns>
+        /// A task that completes when the transaction is successfully committed; otherwise throws if all attempts fail
+        /// or if the operation is cancelled.
+        /// </returns>
         public static async Task Atomic<T>(
             Action<Transaction<T>> action,
             int maxAttempts = DefaultMaxAttempts,
@@ -74,24 +79,29 @@ namespace STMSharp.Core
         /// <summary>
         /// Executes an asynchronous transactional function with automatic retries in case of conflict.
         /// </summary>
-        /// <typeparam name="T">The return type of the STM transaction.</typeparam>
+        /// <typeparam name="T">
+        /// The type of STM variables involved in the transaction (i.e., Transaction&lt;T&gt;).
+        /// This is not a return type; the method completes when the transaction commits or throws on failure.
+        /// </typeparam>
         /// <param name="func">A user-defined asynchronous function containing transactional logic.</param>
         /// <param name="maxAttempts">The maximum number of retry attempts before failing.</param>
         /// <param name="initialBackoffMilliseconds">The base delay used for calculating backoff between retries.</param>
         /// <param name="backoffType">The backoff algorithm to apply on conflict (e.g., exponential, jitter, constant).</param>
         /// <param name="readOnly">Whether the transaction should be executed in read-only mode (disallows writes).</param>
         /// <param name="cancellationToken">Token used to cancel the operation externally.</param>
-        /// <returns>A task that completes once the transaction is successfully committed or throws on failure.</returns>
+        /// <returns>
+        /// A task that completes when the transaction is successfully committed; otherwise throws if all attempts fail
+        /// or if the operation is cancelled.
+        /// </returns>
         public static async Task Atomic<T>(
             Func<Transaction<T>, Task> func,
             int maxAttempts = DefaultMaxAttempts,
             int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds,
-            BackoffType backoffType = BackoffType.ExponentialWithJitter,
+            BackoffType backoffType = DefaultBackoffType,
             bool readOnly = false,
             CancellationToken cancellationToken = default)
         {
             int attempt = 0;
-            int backoffTime = initialBackoffMilliseconds;
 
             // Retry loop for transaction attempts
             while (attempt < maxAttempts)
