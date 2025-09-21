@@ -36,7 +36,7 @@ namespace STMSharp.Core.Backoff
             return type switch
             {
                 BackoffType.Exponential => CapExp(attempt),
-                BackoffType.ExponentialWithJitter => Random.Shared.Next(0, CapExp(attempt) + 1),
+                BackoffType.ExponentialWithJitter => Random.Shared.Next(1, CapExp(attempt) + 1),
                 BackoffType.Linear => Math.Min(baseDelay * (attempt + 1), maxDelay),
                 BackoffType.Constant => baseDelay,
                 _ => throw new ArgumentOutOfRangeException(nameof(type))

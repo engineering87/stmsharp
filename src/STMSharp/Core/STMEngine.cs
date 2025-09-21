@@ -122,11 +122,11 @@ namespace STMSharp.Core
                     return;
                 }
 
+                attempt++;
+
                 // Conflict detected: wait before retrying
                 int delay = BackoffPolicy.GetDelayMilliseconds(backoffType, attempt, initialBackoffMilliseconds);
                 await Task.Delay(delay, cancellationToken);
-
-                attempt++;
             }
 
             // All attempts failed: throw timeout exception

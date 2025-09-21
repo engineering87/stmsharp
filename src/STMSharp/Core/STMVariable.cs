@@ -73,18 +73,43 @@ namespace STMSharp.Core
         /// </summary>
         public (T Value, long Version) ReadWithVersion()
         {
-            T value;
-            long versionBefore, versionAfter;
+            // Seqlock-style snapshot:
+            // - Even version  => variable is not reserved by a writer (readable snapshot)
+            // - Odd  version  => variable is reserved by a writer (avoid taking a snapshot)
+            //
+            // The loop below ensures we only return a stable (value, version) pair
+            // captured while the version was even and unchanged across the read.
 
-            do
+            var spinner = new SpinWait();
+
+            while (true)
             {
-                versionBefore = Version;
-                value = Read();
-                versionAfter = Version;
-            }
-            while (versionBefore != versionAfter);
+                // 1) Read the version first
+                long v1 = Version; // Volatile read (property uses Volatile.Read)
 
-            return (value, versionBefore);
+                // If version is odd, a writer has a reservation: retry
+                if ((v1 & 1L) != 0)
+                {
+                    spinner.SpinOnce(); // polite back-off under contention
+                    continue;
+                }
+
+                // 2) Read the value
+                T value = Read(); // Volatile.Read on the boxed field inside
+
+                // 3) Re-read the version and validate stability + evenness
+                long v2 = Version;
+
+                // Snapshot is valid if:
+                // - version hasn't changed between the two reads (v1 == v2)
+                // - the version is even (no writer reservation during the read)
+                if (v1 == v2 && (v1 & 1L) == 0)
+                    return (value, v1);
+
+                // Otherwise, a writer interfered (or reserved after first read).
+                // Spin and retry the whole sequence.
+                spinner.SpinOnce();
+            }
         }
 
         // --------------------------------------------------------------------
