@@ -42,5 +42,19 @@ namespace STMSharp.Core.Backoff
                 _ => throw new ArgumentOutOfRangeException(nameof(type))
             };
         }
+
+        public static TimeSpan GetDelay(
+            BackoffType type, 
+            int attempt, 
+            TimeSpan baseDelay, 
+            TimeSpan? maxDelay = null)
+        {
+            var ms = GetDelayMilliseconds(
+                type,
+                attempt,
+                (int)Math.Max(1, baseDelay.TotalMilliseconds),
+                (int)Math.Max(1, (maxDelay ?? TimeSpan.FromMilliseconds(2000)).TotalMilliseconds));
+            return TimeSpan.FromMilliseconds(ms);
+        }
     }
 }

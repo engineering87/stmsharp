@@ -132,5 +132,97 @@ namespace STMSharp.Core
             // All attempts failed: throw timeout exception
             throw new TimeoutException($"STM transaction failed after {maxAttempts} attempts");
         }
+
+        /// <summary>
+        /// Executes a transactional action using the provided<see cref = "StmOptions" /> for retries, backoff and mode.
+        ///  This overload accepts a synchronous action and internally wraps it into the asynchronous overload.
+        /// </summary>
+        /// <typeparam name="T">
+        /// The STM value type used by <see cref="Transaction{T}"/> within the user action.
+        /// This is not a return type; the method completes when the transaction commits or throws on failure.
+        /// </typeparam>
+        /// <param name="action">User-defined synchronous action containing the transactional logic.</param>
+        /// <param name="options">
+        /// Configuration for retry policy, delays, backoff strategy and transaction mode. If <c>null</c>, <see cref="StmOptions.Default"/> is used.
+        /// </param>
+        /// <param name="cancellationToken">Token used to cancel the operation externally.</param>
+        /// <returns>
+        /// A task that completes when the transaction is successfully committed; otherwise it throws if all attempts fail
+        /// or if the operation is cancelled.
+        /// </returns>
+        /// <remarks>
+        /// - Honors read-only mode via <see cref="StmOptions.Mode"/>.<br/>
+        /// - Uses the same retry and backoff semantics as the asynchronous overload.
+        /// </remarks>
+        public static Task Atomic<T>(
+            Action<Transaction<T>> action,
+            StmOptions? options,
+            CancellationToken cancellationToken = default)
+        {
+            options ??= StmOptions.Default;
+            return Atomic<T>(tx =>
+            {
+                action(tx);
+                return Task.CompletedTask;
+            }, options, cancellationToken);
+        }
+
+        /// <summary>Executes a transactional function using the provided<see cref = "StmOptions" /> for retries, backoff and mode.
+        ///  Automatically retries on conflicts according to the configured policy.
+        /// </summary>
+        /// <typeparam name="T">
+        /// The STM value type used by <see cref="Transaction{T}"/> within the user function.
+        /// This is not a return type; the method completes when the transaction commits or throws on failure.
+        /// </typeparam>
+        /// <param name="func">User-defined asynchronous function containing the transactional logic.</param>
+        /// <param name="options">
+        /// Configuration for retry policy, delays (<see cref="StmOptions.BaseDelay"/>, <see cref="StmOptions.MaxDelay"/>),
+        /// backoff strategy (<see cref="StmOptions.Strategy"/>) and transaction mode (<see cref="StmOptions.Mode"/>).
+        /// If <c>null</c>, <see cref="StmOptions.Default"/> is used.
+        /// </param>
+        /// <param name="cancellationToken">Token used to cancel the operation externally.</param>
+        /// <returns>
+        /// A task that completes when the transaction is successfully committed; otherwise it throws if all attempts fail
+        /// or if the operation is cancelled.
+        /// </returns>
+        /// <exception cref="TimeoutException">
+        /// Thrown when all attempts (see <see cref="StmOptions.MaxAttempts"/>) are exhausted without a successful commit.
+        /// </exception>
+        /// <exception cref="OperationCanceledException">
+        /// Thrown if <paramref name="cancellationToken"/> is signaled during execution.
+        /// </exception>
+        /// <remarks>
+        /// Read-only transactions validate snapshots but never persist writes. Backoff delays are computed via
+        /// <c>BackoffPolicy.GetDelayMilliseconds</c> using the configured strategy and delay bounds.
+        /// </remarks>
+        public static async Task Atomic<T>(
+            Func<Transaction<T>, Task> func,
+            StmOptions? options,
+            CancellationToken cancellationToken = default)
+        {
+            options ??= StmOptions.Default;
+            var (maxAttempts, baseMs, maxMs, strategy, isReadOnly) = options.ToPolicyArgs();
+
+            int attempt = 0;
+
+            while (attempt < maxAttempts)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var transaction = new Transaction<T>(isReadOnly);
+
+                await func(transaction).ConfigureAwait(false);
+
+                if (transaction.Commit())
+                    return;
+
+                attempt++;
+
+                int delay = BackoffPolicy.GetDelayMilliseconds(strategy, attempt, baseMs, maxMs);
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            }
+
+            throw new TimeoutException($"STM transaction failed after {maxAttempts} attempts");
+        }
     }
 }
