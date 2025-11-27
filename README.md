@@ -9,55 +9,95 @@
 **STMSharp** brings **Software Transactional Memory** to .NET: write your concurrent logic as atomic transactions over shared variables, with optimistic snapshots and a lock-free CAS commit that prevents lost updates under contention.
 
 ## Features
-- **Transaction-based memory model:** Manage and update shared variables without needing locks.
-- **Atomic transactions:** Supports atomicity with retry mechanisms and backoff strategies.
-- **Conflict detection:** Automatically detects conflicts in the transaction, ensuring data consistency.
-- **Exponential backoff:** Includes an automatic backoff strategy for retries, enhancing performance in high-contention scenarios.
 
-⚠️ **Breaking change**: `Version` is now `long` and `ReadWithVersion()` returns `(T Value, long Version)`.
+- **Transaction-based memory model:** manage and update shared variables without explicit locks.
+- **Atomic transactions:** automatic retries with configurable max attempts.
+- **Conflict detection:** optimistic snapshot validation that preserves consistency.
+- **Configurable backoff strategies:** `Exponential`, `ExponentialWithJitter` (default), `Linear`, `Constant`.
+- **Read-only transactions:** validate snapshots without allowing writes, for safer read-heavy workloads.
+- **Diagnostics:** global conflict/retry counters per `Transaction<T>` via `StmDiagnostics`.
 
 ## What is Software Transactional Memory (STM)?
+
 Software Transactional Memory (STM) is a concurrency control mechanism that simplifies writing concurrent programs by providing an abstraction similar to database transactions. STM allows developers to work with shared memory without the need for explicit locks, reducing the complexity of concurrent programming.
 
-## Key Concepts of STM:
-- **Transactions:** Operations on shared variables are grouped into transactions. A transaction is a unit of work that must be executed atomically.
-- **Atomicity:** A transaction is executed as a single, indivisible operation. Either all operations within the transaction are completed, or none are, ensuring consistency.
-- **Isolation:** Transactions are isolated from each other, meaning that the operations in one transaction do not interfere with others, even if they are executed concurrently.
-- **Conflict Detection:** STM systems track changes to shared variables and detect conflicts when two or more transactions try to modify the same variable. If a conflict is detected, the system retries the transaction or resolves it according to a conflict resolution strategy.
-- **Composability:** STM transactions can be nested or composed together, making it easier to structure complex operations.
+## Key Concepts of STM
 
-## Benefits of STM:
-- **Simplified concurrency control:** STM eliminates the need for low-level synchronization mechanisms like locks, reducing the potential for deadlocks and race conditions.
-- **Scalability:** STM can scale more effectively than traditional lock-based systems, especially in highly concurrent environments.
-- **Composability and Modularity:** STM makes it easier to compose complex operations from simple ones, which promotes cleaner and more modular code.
+- **Transactions:** operations on shared variables are grouped into transactions. A transaction is a unit of work that must be executed atomically.
+- **Atomicity:** a transaction is executed as a single, indivisible operation. Either all operations within the transaction are completed, or none are.
+- **Isolation:** transactions are isolated from each other, even when running concurrently.
+- **Conflict detection:** STM tracks changes to shared variables and detects conflicts when multiple transactions try to modify the same variable.
+- **Composability:** STM transactions can be composed and nested, making it easier to build complex operations.
 
-In STMSharp, STM is implemented using transactions that read from and write to STM variables. Transactions can be retried automatically using an exponential backoff strategy to handle conflicts, making it easier to work with shared data in concurrent environments.
+## Benefits of STM
+
+- **Simplified concurrency control:** no low-level locking, fewer deadlocks and race conditions.
+- **Scalability:** better behaviour than lock-based systems under high contention.
+- **Composability and modularity:** complex operations can be built from smaller transactional pieces.
+
+In STMSharp, STM is implemented using transactions that read from and write to STM variables. Transactions can be automatically retried using a backoff strategy to handle conflicts, making it easier to work with shared data in concurrent environments.
 
 ## How it works (in a nutshell)
+
 - `STMVariable<T>` stores a value and a monotonic version (`long`).
- -A transaction keeps:
-    - `_reads` (cache, includes read-your-own-writes),
-    - `_writes` (buffered updates),
-    - `_snapshotVersions` (immutable version per first observation).
-- Commit protocol (lock-free):
-    1. Guard: each write must have a snapshot.
-    2. Reserve each write via CAS: `even → odd` (TryAcquireForWrite).
-    3. Re-validate read-only entries: current version must equal the snapshot and be even (not reserved).
-    4. Write & release: apply buffered values and increment version `odd → even`.
+- A transaction keeps:
+  - `_reads` (cache, including read-your-own-writes),
+  - `_writes` (buffered updates),
+  - `_snapshotVersions` (immutable version per first observation).
+
+Commit protocol (lock-free):
+
+1. **Guard:** each write must have a captured snapshot.
+2. **Reserve:** for each write, CAS the version from `even → odd` (based on the immutable snapshot) via `TryAcquireForWrite`.
+3. **Re-validate:** for read-set entries, the current version must still equal the snapshot and be **even** (not reserved).
+4. **Write & release:** apply buffered values and increment the version `odd → even` (commit complete).
 
 This ensures serializability and prevents lost updates without runtime locks.
 
-## Core Components:
-1. **Transaction<T>:** The main class representing a transaction. It allows reading from and writing to STM variables.
-2. **STMVariable<T>:** A type that encapsulates the shared data and supports STM operations (read/write).
-3. **STMEngine:** Provides static methods for managing transactions and conflict resolution.
+## Core Components
+
+1. **`STMVariable<T>`**  
+   Encapsulates a shared value and its version. Supports:
+   - transactional access via `ReadWithVersion()` / `Version`,
+   - non-transactional writes via `Write(T)` (see caveats below).
+
+2. **`Transaction<T>`**  
+   Internal transactional context used by `STMEngine`. Tracks:
+   - read cache (`_reads`),
+   - buffered writes (`_writes`),
+   - immutable snapshot versions (`_snapshotVersions`),
+   and implements the optimistic commit protocol.
+
+3. **`STMEngine`**  
+   Public façade exposing `Atomic<T>(...)` overloads, with:
+   - configurable retry/backoff,
+   - support for read-only and read-write modes,
+   - overloads that accept `StmOptions`.
+
+4. **`StmOptions`**  
+   Immutable configuration for transactional execution:
+   - `MaxAttempts`
+   - `BaseDelay`, `MaxDelay`
+   - `BackoffType`
+   - `TransactionMode` (`ReadWrite`, `ReadOnly`)
+
+5. **`StmDiagnostics`**  
+   Public diagnostics helper:
+   - `GetConflictCount<T>()`
+   - `GetRetryCount<T>()`
+   - `Reset<T>()`
+
+Counters are per closed generic type (`Transaction<int>` vs `Transaction<string>`).
 
 ## CAS & the internal protocol
+
 STMSharp uses an even/odd version scheme and Compare-And-Exchange (CAS) to coordinate writers:
+
 - **Invariants**
-    - Even version ⇒ variable is free (no writer holds a reservation).
-    - Odd version ⇒ variable is reserved by some writer during a commit attempt.
-    - Only the transactional path mutates state; non-transactional writes are not exposed.
+  - Even version ⇒ variable is free (no writer holds a reservation).
+  - Odd version ⇒ variable is reserved by some writer during a commit attempt.
+  - Transactional commits are the only **safe** way to mutate shared state under concurrency; direct writes bypass the STM protocol.
+
 - **Reserve (CAS)**
     ```csharp
     // success only if current == snapshotVersion (even)
@@ -75,36 +115,72 @@ STMSharp uses an even/odd version scheme and Compare-And-Exchange (CAS) to coord
     - On failure, only the already acquired reservations are released, in reverse order.
 - **Snapshots**
     - The first observation of a variable (read or write-first) captures an immutable `(value, version)` pair used both for validation and reservation.
-- **Why no non-transactional writes?**
-    - To preserve the invariants and prevent out-of-band mutations from violating the even/odd protocol, `ISTMVariable<T>` exposes only `ReadWithVersion()` and `Version`. Writes occur exclusively via the transactional commit path.
 
 ## How to use it
-Here's a basic example of how to use STMSharp in your project:
+
+**Basic example**
 
 ```csharp
-try
-{
-   // Initialize a shared STM variable
-   var sharedVar = new STMVariable<int>(0);
+// Initialize a shared STM variable
+var sharedVar = new STMVariable<int>(0);
 
-   // Perform an atomic transaction to increment the value
-   STMEngine.Atomic(transaction =>
-   {
-       var value = transaction.Read(sharedVar);
-       transaction.Write(sharedVar, value + 1);
-   });
-
-   // Perform another atomic transaction
-   STMEngine.Atomic(transaction =>
-   {
-       var value = transaction.Read(sharedVar);
-       transaction.Write(sharedVar, value + 1);
-   });
-}
-catch (InvalidOperationException ex)
+// Perform an atomic transaction to increment the value
+await STMEngine.Atomic<int>(tx =>
 {
-    Console.WriteLine("Transaction failed: " + ex.Message);
-}
+    var value = tx.Read(sharedVar);
+    tx.Write(sharedVar, value + 1);
+});
+
+// Perform another atomic transaction
+await STMEngine.Atomic<int>(tx =>
+{
+    var value = tx.Read(sharedVar);
+    tx.Write(sharedVar, value + 1);
+});
+```
+
+**Using StmOptions and read-only mode**
+
+```csharp
+var sharedVar = new STMVariable<int>(0);
+
+// Read-only transaction (throws if Write is called)
+var readOnlyOptions = StmOptions.ReadOnly;
+
+await STMEngine.Atomic<int>(async tx =>
+{
+    var value = tx.Read(sharedVar);
+    Console.WriteLine($"Current value: {value}");
+    // tx.Write(sharedVar, 123); // would throw InvalidOperationException
+}, readOnlyOptions);
+
+// Custom retry/backoff policy
+var customOptions = new StmOptions(
+    MaxAttempts: 5,
+    BaseDelay: TimeSpan.FromMilliseconds(50),
+    MaxDelay: TimeSpan.FromMilliseconds(1000),
+    Strategy: BackoffType.ExponentialWithJitter,
+    Mode: TransactionMode.ReadWrite
+);
+
+await STMEngine.Atomic<int>(async tx =>
+{
+    var value = tx.Read(sharedVar);
+    tx.Write(sharedVar, value + 1);
+}, customOptions);
+```
+
+**Diagnostics**
+
+```csharp
+// Reset counters for int-transactions
+StmDiagnostics.Reset<int>();
+
+// Run some atomic operations...
+var conflicts = StmDiagnostics.GetConflictCount<int>();
+var retries   = StmDiagnostics.GetRetryCount<int>();
+
+Console.WriteLine($"Conflicts: {conflicts}, Retries: {retries}");
 ```
 
 ## 📈 Performance Benchmarks

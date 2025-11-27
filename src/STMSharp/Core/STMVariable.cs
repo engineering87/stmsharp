@@ -7,29 +7,28 @@ namespace STMSharp.Core
 {
     /// <summary>
     /// A thread-safe STM variable that supports both reference and value types.
-    /// 
+    ///
     /// Semantics:
     /// - Writes are visible atomically and advance a monotonic version counter.
     /// - Readers can obtain a consistent (Value, Version) snapshot using ReadWithVersion().
     /// - Transactional commit uses internal CAS-based reservation helpers (no runtime locks).
     ///
+    /// Important:
+    /// - For proper STM semantics, concurrent updates should be done via <see cref="Transaction{T}"/>.
+    ///   Direct calls to <see cref="Write(T)"/> bypass the transactional protocol and may break isolation
+    ///   if used concurrently with transactions.
+    ///
     /// Notes on T:
     /// - If T is a mutable reference type, external mutations that bypass Write(...) can break isolation
     ///   because the version won't change. Prefer immutable types or treat T as a value.
     /// </summary>
-    public sealed class STMVariable<T> : ISTMVariable<T>
+    public sealed class STMVariable<T>(T initialValue) : ISTMVariable<T>
     {
         // Boxed value to support both value types and reference types
-        private object _boxedValue;
+        private object _boxedValue = initialValue!;
 
         // Monotonic version; incremented on every successful write or reservation transition
-        private long _version;
-
-        public STMVariable(T initialValue)
-        {
-            _boxedValue = initialValue!;
-            _version = 0;
-        }
+        private long _version = 0;
 
         /// <summary>
         /// Reads the current value in a thread-safe manner.
@@ -44,9 +43,15 @@ namespace STMSharp.Core
         /// Writes a new value and increments the version atomically
         /// (if the value actually changed by EqualityComparer).
         /// </summary>
+        /// <remarks>
+        /// This method does not participate in the STM transactional protocol.
+        /// Use it primarily for initialization or non-concurrent scenarios.
+        /// In concurrent STM usage, prefer transactional writes via <see cref="Transaction{T}"/>.
+        /// </remarks>
         public void Write(T value)
         {
             var currentValue = (T)Volatile.Read(ref _boxedValue)!;
+
             if (!EqualityComparer<T>.Default.Equals(currentValue, value))
             {
                 Volatile.Write(ref _boxedValue, value!);
@@ -122,6 +127,7 @@ namespace STMSharp.Core
         internal bool TryAcquireForWrite(long expectedSnapshotVersion)
         {
             if ((expectedSnapshotVersion & 1L) != 0) return false; // must be even (unlocked)
+
             return Interlocked.CompareExchange(
                 ref _version,
                 expectedSnapshotVersion + 1,   // make it odd: reserved

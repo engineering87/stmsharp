@@ -32,6 +32,7 @@ namespace STMSharp.Core
         {
             var baseMs = (int)Math.Max(1, BaseDelay.TotalMilliseconds);
             var maxMs = (int)Math.Max(1, (MaxDelay ?? TimeSpan.FromMilliseconds(2000)).TotalMilliseconds);
+
             return (Math.Max(1, MaxAttempts), baseMs, maxMs, Strategy, IsReadOnly);
         }
     }

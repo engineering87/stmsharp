@@ -1,7 +1,7 @@
 ﻿// (c) 2024-2025 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
-using STMSharp.Core.Interfaces;
 using System.Runtime.CompilerServices;
+using STMSharp.Core.Interfaces;
 
 namespace STMSharp.Core
 {
@@ -18,8 +18,9 @@ namespace STMSharp.Core
     /// Notes:
     /// - Conflict and retry counters are static per closed generic type (Transaction&lt;T&gt;).
     /// - Read-only transactions validate but never persist writes.
+    /// - A Transaction instance is not thread-safe and must be used by a single thread.
     /// </summary>
-    public class Transaction<T>
+    internal class Transaction<T>(bool isReadOnly = false) : ITransaction<T>
     {
         // Read cache and read-your-own-writes within this transaction
         private readonly Dictionary<ISTMVariable<T>, T> _reads = [];
@@ -31,10 +32,10 @@ namespace STMSharp.Core
         private readonly Dictionary<ISTMVariable<T>, long> _snapshotVersions = [];
 
         // Global-ish counters (per closed generic type)
-        private static int _conflictCount = 0; // number of detected conflicts
-        private static int _retryCount = 0;    // number of failed attempts (that required a retry)
+        private static int _conflictCount; // number of detected conflicts
+        private static int _retryCount;    // number of failed attempts (that required a retry)
 
-        private readonly bool _isReadOnly;
+        private readonly bool _isReadOnly = isReadOnly;
 
         /// <summary>
         /// Total number of detected conflicts (thread-safe read).
@@ -45,11 +46,6 @@ namespace STMSharp.Core
         /// Total number of retry attempts (thread-safe read).
         /// </summary>
         public static int RetryCount => Volatile.Read(ref _retryCount);
-
-        public Transaction(bool isReadOnly = false)
-        {
-            _isReadOnly = isReadOnly;
-        }
 
         /// <summary>
         /// Reads a value from an STM variable.
@@ -72,8 +68,12 @@ namespace STMSharp.Core
             // First observation: capture value and immutable snapshot version
             var (value, version) = variable.ReadWithVersion();
             _reads[variable] = value;
+
             if (!_snapshotVersions.ContainsKey(variable))
+            {
                 _snapshotVersions[variable] = version;
+            }
+
             return value;
         }
 
@@ -119,6 +119,7 @@ namespace STMSharp.Core
                     return true;
                 }
             }
+
             return false;
         }
 
@@ -126,27 +127,17 @@ namespace STMSharp.Core
         /// Attempts to commit the transaction.
         /// Returns true if validation succeeds and (for non read-only) writes are applied.
         ///
-        /// Lock-free CAS protocol:
-        /// 0) Ensure every write-set variable has an immutable snapshot (defensive).
-        /// 1) Reserve each write-set variable by CAS-ing its version from snapshot to snapshot+1.
-        /// 2) Re-validate the entire observed snapshot (read- and write-sets).
-        /// 3) Apply buffered writes and release reservations by advancing version again.
-        /// </summary>
-        /// <summary>
-        /// Attempts to commit the transaction.
-        /// Returns true if validation succeeds and (for non read-only) writes are applied.
-        ///
         /// Lock-free CAS protocol (even/odd version scheme):
         /// - Even version = free (unreserved); Odd version = reserved by some writer.
-        /// - Reserve: CAS from snapshotVersion (even) -> snapshotVersion + 1 (odd).
+        /// - Reserve: CAS from snapshotVersion (even) → snapshotVersion + 1 (odd).
         /// - Commit: write the value, then increment version to make it even again.
-        /// 
+        ///
         /// Steps:
         /// 0) Defensive: ensure every write-set variable has a captured snapshot version.
         /// 1) Reserve all write-set variables in a deterministic order (prevents livelock).
         /// 2) Re-validate the entire observed snapshot (read-set + write-set).
         /// 3) Apply buffered writes and release reservations (advance version again).
-        /// 
+        ///
         /// Notes:
         /// - Read-only transactions (or no writes) only validate the snapshot.
         /// - On any failure, reservations acquired so far are released in reverse order,
@@ -164,6 +155,7 @@ namespace STMSharp.Core
                     Clear();
                     return false;
                 }
+
                 Clear();
                 return true;
             }
@@ -188,6 +180,20 @@ namespace STMSharp.Core
 
             var acquired = new List<STMVariable<T>>(writeKeys.Length);
 
+            // Local helper to release reservations and record a conflict/retry
+            bool AbortWithRelease()
+            {
+                for (int i = acquired.Count - 1; i >= 0; i--)
+                {
+                    acquired[i].ReleaseAfterAbort();
+                }
+
+                Interlocked.Increment(ref _retryCount);
+                Interlocked.Increment(ref _conflictCount);
+                Clear();
+                return false;
+            }
+
             try
             {
                 // 1) Reserve all write-set variables (CAS version from even -> odd based on immutable snapshot).
@@ -198,14 +204,7 @@ namespace STMSharp.Core
                     // We need the concrete type to access CAS helpers.
                     if (w is not STMVariable<T> concrete || !concrete.TryAcquireForWrite(snapVersion))
                     {
-                        // Release any previously acquired reservations (reverse order).
-                        for (int i = acquired.Count - 1; i >= 0; i--)
-                            acquired[i].ReleaseAfterAbort();
-
-                        Interlocked.Increment(ref _retryCount);
-                        Interlocked.Increment(ref _conflictCount);
-                        Clear();
-                        return false;
+                        return AbortWithRelease();
                     }
 
                     acquired.Add(concrete);
@@ -227,13 +226,7 @@ namespace STMSharp.Core
                     // If version changed OR is currently odd (reserved by someone else), abort.
                     if (curVersion != snapVersion || (curVersion & 1L) != 0)
                     {
-                        for (int i = acquired.Count - 1; i >= 0; i--)
-                            acquired[i].ReleaseAfterAbort();
-
-                        Interlocked.Increment(ref _retryCount);
-                        Interlocked.Increment(ref _conflictCount);
-                        Clear();
-                        return false;
+                        return AbortWithRelease();
                     }
                 }
 
@@ -254,6 +247,7 @@ namespace STMSharp.Core
                 {
                     try { acquired[i].ReleaseAfterAbort(); } catch { /* swallow */ }
                 }
+
                 Clear();
                 throw;
             }
@@ -277,5 +271,16 @@ namespace STMSharp.Core
             Interlocked.Exchange(ref _conflictCount, 0);
             Interlocked.Exchange(ref _retryCount, 0);
         }
+
+        T ITransaction<T>.Read(STMVariable<T> variable)
+        {
+            return Read(variable);
+        }
+
+        void ITransaction<T>.Write(STMVariable<T> variable, T value)
+        {
+            Write(variable, value);
+        }
+
     }
 }

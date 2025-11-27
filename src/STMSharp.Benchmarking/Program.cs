@@ -2,7 +2,6 @@
 // This code is licensed under MIT license (see LICENSE.txt for details)
 using STMSharp.Benchmarking.Config;
 using STMSharp.Core;
-using STMSharp.Core.Interfaces;
 using System.Diagnostics;
 using System.Text.Json;
 
@@ -65,11 +64,13 @@ namespace STMSharp.Benchmarking
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.WriteLine($"{"Time per operation:".PadLeft(30)} {timePerOperation:F4} ms");
 
+            // Use public diagnostics helper instead of internal Transaction<T>
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine($"{"Total conflicts resolved:".PadLeft(30)} {Transaction<int>.ConflictCount}");
-            Console.WriteLine($"{"Total retries attempted:".PadLeft(30)} {Transaction<int>.RetryCount}");
+            Console.WriteLine($"{"Total conflicts resolved:".PadLeft(30)} {StmDiagnostics.GetConflictCount<int>()}");
+            Console.WriteLine($"{"Total retries attempted:".PadLeft(30)} {StmDiagnostics.GetRetryCount<int>()}");
 
             int finalValue = 0;
+
             // Read final STM value using configured retry settings
             await STMEngine.Atomic<int>(
                 tx => { finalValue = tx.Read(sharedSTMVar); },
@@ -89,7 +90,7 @@ namespace STMSharp.Benchmarking
         /// Runs the benchmark by simulating concurrent STM transactions.
         /// </summary>
         /// <param name="sharedSTMVar">The shared STM variable among threads.</param>
-        static async Task RunBenchmark(ISTMVariable<int> sharedSTMVar)
+        static async Task RunBenchmark(STMVariable<int> sharedSTMVar)
         {
             // Create a list of tasks to run the transactions concurrently
             var tasks = new List<Task>();
@@ -107,7 +108,7 @@ namespace STMSharp.Benchmarking
         /// Executes STM transactions for the specified number of operations.
         /// </summary>
         /// <param name="sharedSTMVar">The shared STM variable to be accessed in the transactions.</param>
-        static async Task ExecuteTransactions(ISTMVariable<int> sharedSTMVar)
+        static async Task ExecuteTransactions(STMVariable<int> sharedSTMVar)
         {
             try
             {
@@ -121,6 +122,7 @@ namespace STMSharp.Benchmarking
                     });
                 }
 
+                // Optional artificial processing delay between batches
                 await Task.Delay(Config.ProcessingTime);
             }
             catch (TimeoutException ex)
