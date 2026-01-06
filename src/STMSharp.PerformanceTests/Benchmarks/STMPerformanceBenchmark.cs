@@ -1,8 +1,5 @@
 ﻿// (c) 2025 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
-
-using System.Threading;
-using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
 using BenchmarkDotNet.Order;
@@ -14,7 +11,7 @@ namespace STMSharp.PerformanceTests.Benchmarks
     /// <summary>
     /// Simple end-to-end STM benchmarks used by Program.cs to summarize mean times by Backoff type.
     /// Notes:
-    /// - Job runtime aligned to .NET 9 (Net90) to match the project TFM (net9.0).
+    /// - Job runtime aligned to .NET 10 (Net100) to match the project TFM (net10.0).
     /// - State is reset per iteration to avoid cross-iteration skew.
     /// - Keep method names 'AtomicWrite' and 'AtomicReadOnly' for Program.cs aggregation.
     /// </summary>
@@ -22,7 +19,7 @@ namespace STMSharp.PerformanceTests.Benchmarks
     [RankColumn]
     [Orderer(SummaryOrderPolicy.FastestToSlowest)]
     [HideColumns("StdDev")] // modern BDN: hide by column name
-    [SimpleJob(RuntimeMoniker.Net90, launchCount: 1, warmupCount: 3, iterationCount: 10)]
+    [SimpleJob(RuntimeMoniker.Net10_0, launchCount: 1, warmupCount: 3, iterationCount: 10)]
     public class STMPerformanceBenchmark
     {
         private STMVariable<int> _variable = default!;

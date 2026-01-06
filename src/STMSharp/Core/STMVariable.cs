@@ -7,29 +7,33 @@ namespace STMSharp.Core
 {
     /// <summary>
     /// A thread-safe STM variable that supports both reference and value types.
-    /// 
+    ///
     /// Semantics:
-    /// - Writes are visible atomically and advance a monotonic version counter.
+    /// - Values are published atomically.
+    /// - A monotonic version tracks changes and coordinates writers via an even/odd protocol.
     /// - Readers can obtain a consistent (Value, Version) snapshot using ReadWithVersion().
     /// - Transactional commit uses internal CAS-based reservation helpers (no runtime locks).
+    ///
+    /// Version protocol (even/odd):
+    /// - Even version => variable is free (no writer reservation)
+    /// - Odd  version => variable is reserved by a writer (commit attempt or direct write)
     ///
     /// Notes on T:
     /// - If T is a mutable reference type, external mutations that bypass Write(...) can break isolation
     ///   because the version won't change. Prefer immutable types or treat T as a value.
     /// </summary>
-    public sealed class STMVariable<T> : ISTMVariable<T>
+    public sealed class STMVariable<T>(T initialValue) : ISTMVariable<T>
     {
+        // Unique, monotonic id used for deterministic ordering of write-set acquisition.
+        // Static is per closed generic type STMVariable<T>, matching Transaction<T> usage.
+        private static long _idSeq;
+        internal long Id { get; } = Interlocked.Increment(ref _idSeq);
+
         // Boxed value to support both value types and reference types
-        private object _boxedValue;
+        private object _boxedValue = initialValue!;
 
-        // Monotonic version; incremented on every successful write or reservation transition
-        private long _version;
-
-        public STMVariable(T initialValue)
-        {
-            _boxedValue = initialValue!;
-            _version = 0;
-        }
+        // Monotonic version; also used for reservation (even/odd scheme)
+        private long _version = 0;
 
         /// <summary>
         /// Reads the current value in a thread-safe manner.
@@ -41,16 +45,53 @@ namespace STMSharp.Core
         }
 
         /// <summary>
-        /// Writes a new value and increments the version atomically
-        /// (if the value actually changed by EqualityComparer).
+        /// Writes a new value while preserving the internal even/odd version protocol:
+        /// - Even version  => free
+        /// - Odd version   => reserved by a writer
+        ///
+        /// This method performs a seqlock-style update:
+        /// 1) Wait until the variable is not reserved (version is even)
+        /// 2) Reserve the variable by CAS-ing version from even -> odd
+        /// 3) Publish the new value
+        /// 4) Release the reservation by incrementing version (odd -> even)
+        ///
+        /// This is a direct (non-transactional) write, but it is protocol-compatible and
+        /// will not leave the variable stuck in a reserved (odd) state.
         /// </summary>
         public void Write(T value)
         {
-            var currentValue = (T)Volatile.Read(ref _boxedValue)!;
-            if (!EqualityComparer<T>.Default.Equals(currentValue, value))
+            var spinner = new SpinWait();
+
+            while (true)
             {
+                // Read current version (volatile via property).
+                // If odd, another writer currently holds a reservation.
+                long v = Version;
+
+                if ((v & 1L) != 0)
+                {
+                    spinner.SpinOnce();
+                    continue;
+                }
+
+                // Optional fast-path: avoid reserving if the value would not change.
+                var currentValue = (T)Volatile.Read(ref _boxedValue)!;
+                if (EqualityComparer<T>.Default.Equals(currentValue, value))
+                    return;
+
+                // Reserve: even -> odd
+                if (Interlocked.CompareExchange(ref _version, v + 1, v) != v)
+                {
+                    spinner.SpinOnce();
+                    continue;
+                }
+
+                // Publish new value under our reservation.
                 Volatile.Write(ref _boxedValue, value!);
+
+                // Release: odd -> even
                 Interlocked.Increment(ref _version);
+                return;
             }
         }
 
@@ -60,11 +101,33 @@ namespace STMSharp.Core
         public long Version => Volatile.Read(ref _version);
 
         /// <summary>
-        /// Manually increments the version (e.g., for pessimistic schemes or forcing invalidation).
+        /// Manually advances the version without changing the stored value.
+        ///
+        /// IMPORTANT:
+        /// This method must NOT leave the version odd, because odd means "reserved".
+        /// Therefore, it advances the version by 2 (even -> even) using CAS.
         /// </summary>
         public void IncrementVersion()
         {
-            Interlocked.Increment(ref _version);
+            var spinner = new SpinWait();
+
+            while (true)
+            {
+                long v = Version;
+
+                // Do not interfere with a writer reservation.
+                if ((v & 1L) != 0)
+                {
+                    spinner.SpinOnce();
+                    continue;
+                }
+
+                // Keep parity even: add 2 using CAS.
+                if (Interlocked.CompareExchange(ref _version, v + 2, v) == v)
+                    return;
+
+                spinner.SpinOnce();
+            }
         }
 
         /// <summary>
@@ -73,58 +136,57 @@ namespace STMSharp.Core
         /// </summary>
         public (T Value, long Version) ReadWithVersion()
         {
-            T value;
-            long versionBefore, versionAfter;
+            var spinner = new SpinWait();
 
-            do
+            while (true)
             {
-                versionBefore = Version;
-                value = Read();
-                versionAfter = Version;
-            }
-            while (versionBefore != versionAfter);
+                long v1 = Version;
 
-            return (value, versionBefore);
+                // If version is odd, a writer has a reservation: retry.
+                if ((v1 & 1L) != 0)
+                {
+                    spinner.SpinOnce();
+                    continue;
+                }
+
+                T value = Read();
+                long v2 = Version;
+
+                // Valid snapshot: unchanged and even
+                if (v1 == v2 && (v1 & 1L) == 0)
+                    return (value, v1);
+
+                spinner.SpinOnce();
+            }
         }
 
         // --------------------------------------------------------------------
         // Internal helpers for lock-free transactional commit (CAS-based)
         // --------------------------------------------------------------------
 
-        // Only acquire if the expected snapshot version is EVEN and equals the current version.
-        // This prevents "stealing" or advancing a version while someone else holds a reservation.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal bool TryAcquireForWrite(long expectedSnapshotVersion)
         {
-            if ((expectedSnapshotVersion & 1L) != 0) return false; // must be even (unlocked)
+            if ((expectedSnapshotVersion & 1L) != 0) return false;
+
             return Interlocked.CompareExchange(
                 ref _version,
-                expectedSnapshotVersion + 1,   // make it odd: reserved
-                expectedSnapshotVersion        // expected even
+                expectedSnapshotVersion + 1,   // reserved (odd)
+                expectedSnapshotVersion        // expected (even)
             ) == expectedSnapshotVersion;
         }
 
-        /// <summary>
-        /// Writes the new value and releases the reservation by advancing version again.
-        /// Must be called only after a successful TryAcquireForWrite on this instance.
-        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal void WriteAndRelease(T value)
         {
-            // Apply the new value first, then advance the version to release the reservation.
             Volatile.Write(ref _boxedValue, value!);
-            Interlocked.Increment(ref _version); // from reserved to committed
+            Interlocked.Increment(ref _version); // odd -> even
         }
 
-        /// <summary>
-        /// Releases a previously acquired reservation without writing a new value.
-        /// Used when the transaction aborts after acquiring reservations.
-        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal void ReleaseAfterAbort()
         {
-            // Advance version to cancel the reservation (no value change).
-            Interlocked.Increment(ref _version);
+            Interlocked.Increment(ref _version); // odd -> even
         }
     }
 }

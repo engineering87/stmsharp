@@ -1,13 +1,11 @@
 ﻿// (c) 2024-2025 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
-
 namespace STMSharp.Core.Interfaces
 {
     /// <summary>
-    /// Interface representing a transactional memory variable.
-    /// Restricted to internal STM operations only.
+    /// Interface representing a transactional memory variable used internally by STM.
     /// </summary>
-    public interface ISTMVariable<T>
+    internal interface ISTMVariable<T>
     {
         /// <summary>
         /// Reads the current value and its version atomically.
