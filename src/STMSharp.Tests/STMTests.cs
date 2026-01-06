@@ -19,7 +19,7 @@ namespace STMSharp.Tests
         /// <summary>
         /// Resets static STM stats (per closed generic type int).
         /// </summary>
-        private static void ResetStats() => StmDiagnostics.Reset<int>();
+        private static void ResetStats() => STMDiagnostics.Reset<int>();
 
         /// <summary>
         /// Runs an async body with a hard timeout. Cancels the body if it overruns.
@@ -84,7 +84,7 @@ namespace STMSharp.Tests
             });
 
             Assert.Equal(2, await ReadInsideTransactionAsync(shared));
-            Assert.True(StmDiagnostics.GetRetryCount<int>() >= 0);
+            Assert.True(STMDiagnostics.GetRetryCount<int>() >= 0);
         }
 
         [Fact]
@@ -166,7 +166,7 @@ namespace STMSharp.Tests
 
             // On failure, show diagnostic counters
             Assert.True(final == writers,
-                $"Final={final}, Expected={writers}, Retries={StmDiagnostics.GetRetryCount<int>()}, Conflicts={StmDiagnostics.GetConflictCount<int>()}");
+                $"Final={final}, Expected={writers}, Retries={STMDiagnostics.GetRetryCount<int>()}, Conflicts={STMDiagnostics.GetConflictCount<int>()}");
         }
 
         [Fact]
@@ -229,8 +229,8 @@ namespace STMSharp.Tests
                 await Task.WhenAll(t1, t2);
             });
 
-            Assert.True(StmDiagnostics.GetRetryCount<int>() >= 0);
-            Assert.True(StmDiagnostics.GetConflictCount<int>() >= 0);
+            Assert.True(STMDiagnostics.GetRetryCount<int>() >= 0);
+            Assert.True(STMDiagnostics.GetConflictCount<int>() >= 0);
         }
 
         [Fact]
@@ -348,7 +348,7 @@ namespace STMSharp.Tests
 
             var final = await ReadInsideTransactionAsync(shared);
             Assert.True(final == threads * ops,
-                $"Final={final}, Expected={threads * ops}, Retries={StmDiagnostics.GetRetryCount<int>()}, Conflicts={StmDiagnostics.GetConflictCount<int>()}");
+                $"Final={final}, Expected={threads * ops}, Retries={STMDiagnostics.GetRetryCount<int>()}, Conflicts={STMDiagnostics.GetConflictCount<int>()}");
         }
 
         [Fact]
@@ -403,8 +403,8 @@ namespace STMSharp.Tests
                 await Task.WhenAll(writer, reader);
             });
 
-            Assert.True(StmDiagnostics.GetRetryCount<int>() >= 0);
-            Assert.True(StmDiagnostics.GetConflictCount<int>() >= 0);
+            Assert.True(STMDiagnostics.GetRetryCount<int>() >= 0);
+            Assert.True(STMDiagnostics.GetConflictCount<int>() >= 0);
         }
 
         // -------- Extra behavioral tests --------
@@ -551,15 +551,46 @@ namespace STMSharp.Tests
             });
 
             // Ensure we have some values (non-deterministic but >= 0)
-            var retriesBeforeReset = StmDiagnostics.GetRetryCount<int>();
-            var conflictsBeforeReset = StmDiagnostics.GetConflictCount<int>();
+            var retriesBeforeReset = STMDiagnostics.GetRetryCount<int>();
+            var conflictsBeforeReset = STMDiagnostics.GetConflictCount<int>();
             Assert.True(retriesBeforeReset >= 0);
             Assert.True(conflictsBeforeReset >= 0);
 
             // Reset and verify
             ResetStats();
-            Assert.Equal(0, StmDiagnostics.GetRetryCount<int>());
-            Assert.Equal(0, StmDiagnostics.GetConflictCount<int>());
+            Assert.Equal(0, STMDiagnostics.GetRetryCount<int>());
+            Assert.Equal(0, STMDiagnostics.GetConflictCount<int>());
+        }
+
+        [Fact]
+        public void NonTransactionalWrite_DoesNotLeaveOddVersion()
+        {
+            ResetStats();
+            var x = new STMVariable<int>(0);
+
+            x.Write(1);
+
+            Assert.True((x.Version & 1L) == 0, $"Version should be even after Write, but was {x.Version}.");
+
+            var (value, version) = x.ReadWithVersion();
+            Assert.Equal(1, value);
+            Assert.True((version & 1L) == 0, $"Snapshot version should be even, but was {version}.");
+        }
+
+        [Fact]
+        public void IncrementVersion_PreservesEvenParity_AndAdvances()
+        {
+            ResetStats();
+            var x = new STMVariable<int>(0);
+
+            var v0 = x.Version;
+            Assert.True((v0 & 1L) == 0, $"Initial version should be even, but was {v0}.");
+
+            x.IncrementVersion();
+
+            var v1 = x.Version;
+            Assert.True((v1 & 1L) == 0, $"Version should remain even after IncrementVersion, but was {v1}.");
+            Assert.True(v1 > v0, $"Version should increase. Before={v0}, After={v1}.");
         }
     }
 }

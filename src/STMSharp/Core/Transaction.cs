@@ -1,6 +1,5 @@
 ﻿// (c) 2024-2025 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
-using System.Runtime.CompilerServices;
 using STMSharp.Core.Interfaces;
 
 namespace STMSharp.Core
@@ -8,80 +7,46 @@ namespace STMSharp.Core
     /// <summary>
     /// Software Transactional Memory transaction with optimistic read snapshots
     /// and a lock-free CAS-based commit protocol (reserve → revalidate → write&release).
-    ///
-    /// Properties:
-    /// - Read-your-own-writes: reads observe buffered writes within the same transaction.
-    /// - Immutable snapshot: the first observation of each variable (read or write-first)
-    ///   captures a version used for validation and reservation; it is never refreshed.
-    /// - Commit uses version CAS to prevent write-write lost updates without runtime locks.
-    ///
-    /// Notes:
-    /// - Conflict and retry counters are static per closed generic type (Transaction&lt;T&gt;).
-    /// - Read-only transactions validate but never persist writes.
-    /// - A Transaction instance is not thread-safe and must be used by a single thread.
     /// </summary>
     internal class Transaction<T>(bool isReadOnly = false) : ITransaction<T>
     {
-        // Read cache and read-your-own-writes within this transaction
-        private readonly Dictionary<ISTMVariable<T>, T> _reads = [];
+        // Track variables by reference identity (avoid surprises with custom Equals/GetHashCode).
+        private readonly Dictionary<ISTMVariable<T>, T> _reads =
+            new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
 
-        // Buffered writes to be applied at commit time
-        private readonly Dictionary<ISTMVariable<T>, T> _writes = [];
+        private readonly Dictionary<ISTMVariable<T>, T> _writes =
+            new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
 
-        // Immutable snapshot: for each observed variable, the version seen at first observation
-        private readonly Dictionary<ISTMVariable<T>, long> _snapshotVersions = [];
+        private readonly Dictionary<ISTMVariable<T>, long> _snapshotVersions =
+            new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
 
-        // Global-ish counters (per closed generic type)
-        private static int _conflictCount; // number of detected conflicts
-        private static int _retryCount;    // number of failed attempts (that required a retry)
+        private static int _conflictCount;
+        private static int _retryCount;
 
         private readonly bool _isReadOnly = isReadOnly;
 
-        /// <summary>
-        /// Total number of detected conflicts (thread-safe read).
-        /// </summary>
         public static int ConflictCount => Volatile.Read(ref _conflictCount);
-
-        /// <summary>
-        /// Total number of retry attempts (thread-safe read).
-        /// </summary>
         public static int RetryCount => Volatile.Read(ref _retryCount);
 
-        /// <summary>
-        /// Reads a value from an STM variable.
-        /// - If written in this transaction, returns the buffered value (read-your-own-writes).
-        /// - Else takes a consistent (Value, Version) snapshot; the version is recorded
-        ///   once per variable and never refreshed for the lifetime of this transaction.
-        /// </summary>
         public T Read(ISTMVariable<T> variable)
         {
             ArgumentNullException.ThrowIfNull(variable);
 
-            // Read-your-own-writes
             if (_writes.TryGetValue(variable, out var pending))
                 return pending;
 
-            // Cached read
             if (_reads.TryGetValue(variable, out var cached))
                 return cached;
 
-            // First observation: capture value and immutable snapshot version
             var (value, version) = variable.ReadWithVersion();
             _reads[variable] = value;
 
             if (!_snapshotVersions.ContainsKey(variable))
-            {
                 _snapshotVersions[variable] = version;
-            }
 
             return value;
         }
 
-        /// <summary>
-        /// Buffers a write to the STM variable (deferred until commit) and guarantees
-        /// read-your-own-writes semantics. Captures the snapshot version only if this is
-        /// the first observation of the variable.
-        /// </summary>
         public void Write(ISTMVariable<T> variable, T value)
         {
             ArgumentNullException.ThrowIfNull(variable);
@@ -89,11 +54,9 @@ namespace STMSharp.Core
             if (_isReadOnly)
                 throw new InvalidOperationException("Cannot Write in a read-only transaction.");
 
-            // Buffer the write and ensure subsequent reads see it
             _writes[variable] = value;
             _reads[variable] = value;
 
-            // Capture immutable snapshot on first observation only
             if (!_snapshotVersions.ContainsKey(variable))
             {
                 var (_, version) = variable.ReadWithVersion();
@@ -101,11 +64,6 @@ namespace STMSharp.Core
             }
         }
 
-        /// <summary>
-        /// Validates the immutable snapshot: for each observed variable, the current version
-        /// must still match the captured snapshot version. Returns true if a conflict is found.
-        /// Increments the conflict counter once per failing call.
-        /// </summary>
         public bool CheckForConflicts()
         {
             foreach (var kvp in _snapshotVersions)
@@ -123,35 +81,13 @@ namespace STMSharp.Core
             return false;
         }
 
-        /// <summary>
-        /// Attempts to commit the transaction.
-        /// Returns true if validation succeeds and (for non read-only) writes are applied.
-        ///
-        /// Lock-free CAS protocol (even/odd version scheme):
-        /// - Even version = free (unreserved); Odd version = reserved by some writer.
-        /// - Reserve: CAS from snapshotVersion (even) → snapshotVersion + 1 (odd).
-        /// - Commit: write the value, then increment version to make it even again.
-        ///
-        /// Steps:
-        /// 0) Defensive: ensure every write-set variable has a captured snapshot version.
-        /// 1) Reserve all write-set variables in a deterministic order (prevents livelock).
-        /// 2) Re-validate the entire observed snapshot (read-set + write-set).
-        /// 3) Apply buffered writes and release reservations (advance version again).
-        ///
-        /// Notes:
-        /// - Read-only transactions (or no writes) only validate the snapshot.
-        /// - On any failure, reservations acquired so far are released in reverse order,
-        ///   counters are updated, state is cleared, and false is returned.
-        /// - An unexpected exception triggers best-effort release + Clear() and is rethrown.
-        /// </summary>
         public bool Commit()
         {
-            // Fast path: read-only or no writes -> snapshot validation only.
             if (_isReadOnly || _writes.Count == 0)
             {
                 if (CheckForConflicts())
                 {
-                    Interlocked.Increment(ref _retryCount);   // CheckForConflicts already bumps _conflictCount.
+                    Interlocked.Increment(ref _retryCount);
                     Clear();
                     return false;
                 }
@@ -160,8 +96,6 @@ namespace STMSharp.Core
                 return true;
             }
 
-            // 0) Defensive: every variable in the write-set must have a snapshot captured
-            //    at first observation (either via Read or Write).
             foreach (var w in _writes.Keys)
             {
                 if (!_snapshotVersions.ContainsKey(w))
@@ -173,20 +107,28 @@ namespace STMSharp.Core
                 }
             }
 
-            // Use a deterministic order for acquisition to reduce livelock and ensure progress.
+            // Deterministic ordering: acquire reservations by per-variable unique Id (total order).
             var writeKeys = _writes.Keys
-                .OrderBy(RuntimeHelpers.GetHashCode) // stable ordering by object identity
+                .Select(v => v as STMVariable<T>)
                 .ToArray();
+
+            // Defensive: should never happen because ISTMVariable<T> is internal and STMVariable<T> is the implementation.
+            if (writeKeys.Any(v => v is null))
+            {
+                Interlocked.Increment(ref _retryCount);
+                Interlocked.Increment(ref _conflictCount);
+                Clear();
+                return false;
+            }
+
+            Array.Sort(writeKeys!, (a, b) => a!.Id.CompareTo(b!.Id));
 
             var acquired = new List<STMVariable<T>>(writeKeys.Length);
 
-            // Local helper to release reservations and record a conflict/retry
             bool AbortWithRelease()
             {
                 for (int i = acquired.Count - 1; i >= 0; i--)
-                {
                     acquired[i].ReleaseAfterAbort();
-                }
 
                 Interlocked.Increment(ref _retryCount);
                 Interlocked.Increment(ref _conflictCount);
@@ -196,45 +138,33 @@ namespace STMSharp.Core
 
             try
             {
-                // 1) Reserve all write-set variables (CAS version from even -> odd based on immutable snapshot).
-                foreach (var w in writeKeys)
+                foreach (var w in writeKeys!)
                 {
                     var snapVersion = _snapshotVersions[w];
 
-                    // We need the concrete type to access CAS helpers.
-                    if (w is not STMVariable<T> concrete || !concrete.TryAcquireForWrite(snapVersion))
-                    {
+                    if (!w!.TryAcquireForWrite(snapVersion))
                         return AbortWithRelease();
-                    }
 
-                    acquired.Add(concrete);
+                    acquired.Add(w);
                 }
 
-                // 2) Re-validate the entire observed snapshot (read-set + write-set).
-                //    - For read-set entries: the current version must still equal the snapshot (and must be even).
-                //    - For write-set entries: skip; they're reserved by us (currently odd).
                 foreach (var kvp in _snapshotVersions)
                 {
                     var variable = kvp.Key;
                     var snapVersion = kvp.Value;
 
                     if (_writes.ContainsKey(variable))
-                        continue; // reserved by us
+                        continue;
 
                     var curVersion = variable.Version;
 
-                    // If version changed OR is currently odd (reserved by someone else), abort.
                     if (curVersion != snapVersion || (curVersion & 1L) != 0)
-                    {
                         return AbortWithRelease();
-                    }
                 }
 
-                // 3) Apply buffered writes and release reservations.
-                //    WriteAndRelease updates the value and advances version (odd -> even).
-                foreach (var w in writeKeys)
+                foreach (var w in writeKeys!)
                 {
-                    ((STMVariable<T>)w).WriteAndRelease(_writes[w]);
+                    w!.WriteAndRelease(_writes[w]);
                 }
 
                 Clear();
@@ -242,10 +172,9 @@ namespace STMSharp.Core
             }
             catch
             {
-                // Best-effort release of any reservations if something unexpected happens.
                 for (int i = acquired.Count - 1; i >= 0; i--)
                 {
-                    try { acquired[i].ReleaseAfterAbort(); } catch { /* swallow */ }
+                    try { acquired[i].ReleaseAfterAbort(); } catch { }
                 }
 
                 Clear();
@@ -253,9 +182,6 @@ namespace STMSharp.Core
             }
         }
 
-        /// <summary>
-        /// Clears per-transaction state after commit or abort.
-        /// </summary>
         private void Clear()
         {
             _reads.Clear();
@@ -263,24 +189,13 @@ namespace STMSharp.Core
             _snapshotVersions.Clear();
         }
 
-        /// <summary>
-        /// Resets global counters (per closed generic type).
-        /// </summary>
         public static void ResetCounters()
         {
             Interlocked.Exchange(ref _conflictCount, 0);
             Interlocked.Exchange(ref _retryCount, 0);
         }
 
-        T ITransaction<T>.Read(STMVariable<T> variable)
-        {
-            return Read(variable);
-        }
-
-        void ITransaction<T>.Write(STMVariable<T> variable, T value)
-        {
-            Write(variable, value);
-        }
-
+        T ITransaction<T>.Read(STMVariable<T> variable) => Read(variable);
+        void ITransaction<T>.Write(STMVariable<T> variable, T value) => Write(variable, value);
     }
 }

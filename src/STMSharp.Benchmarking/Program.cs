@@ -66,8 +66,8 @@ namespace STMSharp.Benchmarking
 
             // Use public diagnostics helper instead of internal Transaction<T>
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine($"{"Total conflicts resolved:".PadLeft(30)} {StmDiagnostics.GetConflictCount<int>()}");
-            Console.WriteLine($"{"Total retries attempted:".PadLeft(30)} {StmDiagnostics.GetRetryCount<int>()}");
+            Console.WriteLine($"{"Total conflicts resolved:".PadLeft(30)} {STMDiagnostics.GetConflictCount<int>()}");
+            Console.WriteLine($"{"Total retries attempted:".PadLeft(30)} {STMDiagnostics.GetRetryCount<int>()}");
 
             int finalValue = 0;
 

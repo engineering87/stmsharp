@@ -59,7 +59,7 @@ This ensures serializability and prevents lost updates without runtime locks.
 1. **`STMVariable<T>`**  
    Encapsulates a shared value and its version. Supports:
    - transactional access via `ReadWithVersion()` / `Version`,
-   - non-transactional writes via `Write(T)` (see caveats below).
+   - direct writes via `Write(T)` that are **protocol-compatible** (they reserve `even → odd` and release `odd → even`), see caveats below.
 
 2. **`Transaction<T>`**  
    Internal transactional context used by `STMEngine`. Tracks:
@@ -94,10 +94,9 @@ Counters are per closed generic type (`Transaction<int>` vs `Transaction<string>
 STMSharp uses an even/odd version scheme and Compare-And-Exchange (CAS) to coordinate writers:
 
 - **Invariants**
-  - Even version ⇒ variable is free (no writer holds a reservation).
-  - Odd version ⇒ variable is reserved by some writer during a commit attempt.
-  - Transactional commits are the only **safe** way to mutate shared state under concurrency; direct writes bypass the STM protocol.
-
+    - Even version ⇒ variable is free (no writer holds a reservation).
+    - Odd version ⇒ variable is reserved by some writer (during a commit attempt or a direct write that follows the same protocol).
+    - Transactional commits are the recommended way to mutate shared state under concurrency; direct writes are protocol-compatible but bypass transactional composition and conflict semantics (use with care under contention).
 - **Reserve (CAS)**
     ```csharp
     // success only if current == snapshotVersion (even)
@@ -111,7 +110,7 @@ STMSharp uses an even/odd version scheme and Compare-And-Exchange (CAS) to coord
     - Write the new value, then `Interlocked.Increment(ref version)` to turn `odd → even` (commit complete).
     - On abort, `ReleaseAfterAbort()` also increments once to revert `odd → even`.
 - **Deterministic ordering**
-    - All reservations over the write-set are attempted in a stable order (based on reference identity) to reduce livelock under contention.
+    - All reservations over the write-set are attempted in a stable total order (by a per-variable unique id) to reduce livelock under contention.
     - On failure, only the already acquired reservations are released, in reverse order.
 - **Snapshots**
     - The first observation of a variable (read or write-first) captures an immutable `(value, version)` pair used both for validation and reservation.
@@ -199,7 +198,7 @@ This project includes a benchmarking application designed to test and simulate t
 The goal of the benchmark is to measure the performance of the STMSharp library based on:
 - **Number of Threads**: The number of concurrent threads accessing the transactional memory.
 - **Number of Operations**: The number of transactions executed by each thread.
-- **Backoff Time**: The delay applied in case of conflicts, with an exponential backoff strategy.
+- **Backoff Time**: The delay applied in case of conflicts, with configurable backoff strategies (Exponential, Exponential+Jitter, Linear, Constant).
 
 ### Benchmark Results
 At the end of execution, the benchmark provides several statistics:

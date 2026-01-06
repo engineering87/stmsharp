@@ -6,7 +6,7 @@ namespace STMSharp.Core
     /// Public diagnostics helper for STM internals (per closed generic type Transaction&lt;T&gt;).
     /// Provides read-only access to conflict/retry counters and a way to reset them.
     /// </summary>
-    public static class StmDiagnostics
+    public static class STMDiagnostics
     {
         /// <summary>
         /// Resets global counters (per closed generic type).
