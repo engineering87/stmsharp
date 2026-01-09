@@ -32,25 +32,26 @@ Each strategy influences retry spacing differently and therefore impacts the lat
 The following table shows the **mean execution time (in nanoseconds)** for transactional operations.  
 Values represent the average across multiple iterations under controlled conditions.
 
-| Backoff Type          | AtomicWrite (ns) | AtomicReadOnly (ns) |
-|-----------------------|-----------------:|---------------------:|
-| **Constant**          |      11,920.00   |         11,066.67    |
-| **Exponential**       |      13,222.22   |         11,440.00    |
-| **Linear**            |      13,560.00   |         10,710.00    |
-| **ExponentialJitter** |      13,611.11   |         13,855.56    |
+| Backoff Type               | AtomicWrite (ns) | AtomicReadOnly (ns) |
+|----------------------------|-----------------:|--------------------:|
+| Linear                     |          5877,78 |             3888,89 |
+| Constant                   |          6212,50 |             3966,67 |
+| ExponentialWithJitter      |          6377,78 |             4233,33 |
+| Exponential                |          8740,00 |             5180,00 |
 
 ## Observations
 
-- **Atomic operations** introduce substantially more overhead than direct reads/writes, as expected for a transactional system that performs snapshot capture, validation, and CAS-based commit.
-- **Constant backoff** provides the lowest latency for write transactions and competitive read-only performance, making it a solid choice under **low contention**.
-- **Exponential and Linear** strategies show slightly higher latency, but remain predictable and stable.
-- **ExponentialWithJitter**, while the slowest in this set, offers randomized retry delays that can mitigate synchronized collisions in **high-contention** scenarios.
+- **Atomic operations** introduce more overhead than direct reads/writes, as expected for a transactional system that performs snapshot capture, validation, and CAS-based commit.
+- **Linear backoff** provides the lowest latency overall in this run, with the best results for both `AtomicWrite` and `AtomicReadOnly`.
+- **Constant** remains very close to Linear, with slightly higher averages but still highly competitive and stable.
+- **ExponentialWithJitter** is marginally slower than Linear/Constant here; its randomized retry spacing can still help reduce synchronized collisions under **high contention**.
+- **Exponential** shows the highest latency in this set, which can be expected depending on how quickly the delay grows with retries.
 - Direct `ReadVariable` and `WriteVariable` operations remain extremely fast, confirming the baseline efficiency of non-transactional paths.
 
 ## Recommendations
 
-- For **low-contention** or latency-sensitive workloads, use **Constant** or **Linear** backoff.
-- For environments where multiple threads may frequently contend on the same STM variables, **Exponential** or **ExponentialWithJitter** can improve fairness and reduce the risk of retry storms.
+- For **low-contention** or latency-sensitive workloads, prefer **Linear** or **Constant** backoff.
+- For scenarios where multiple threads frequently contend on the same STM variables, **ExponentialWithJitter** can improve fairness and reduce the risk of retry storms.
 - For **read-heavy workloads**, prefer `ReadVariable` whenever transactional guarantees are not required; use `AtomicReadOnly` only when isolation is necessary.
 - Potential optimization avenues include:
   - reducing per-transaction allocations,
@@ -59,6 +60,5 @@ Values represent the average across multiple iterations under controlled conditi
 
 ## Conclusion
 
-The new measurements show execution times in the range of **10–14 µs** for atomic STM operations.  
-These values are typical for software transactional memory implementations in managed languages and **do not indicate regression or structural issues**.  
-They reflect the expected cost of isolation, validation, and CAS-based coordination in a realistic benchmark environment targeting .NET 10.
+The new measurements show execution times in the range of **~3.9–8.7 µs** for atomic STM operations (≈ **3,889–8,740 ns**).  
+These values are consistent with the expected cost of isolation, validation, and CAS-based coordination in a managed STM implementation targeting .NET 10.
