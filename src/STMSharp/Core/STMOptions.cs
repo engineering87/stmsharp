@@ -30,8 +30,8 @@ namespace STMSharp.Core
 
         internal (int maxAttempts, int baseMs, int maxMs, BackoffType strategy, bool isReadOnly) ToPolicyArgs()
         {
-            var baseMs = (int)Math.Max(1, BaseDelay.TotalMilliseconds);
-            var maxMs = (int)Math.Max(1, (MaxDelay ?? TimeSpan.FromMilliseconds(2000)).TotalMilliseconds);
+            var baseMs = (int)Math.Clamp(BaseDelay.TotalMilliseconds, 1, int.MaxValue);
+            var maxMs = (int)Math.Clamp((MaxDelay ?? TimeSpan.FromMilliseconds(2000)).TotalMilliseconds, 1, int.MaxValue);
 
             return (Math.Max(1, MaxAttempts), baseMs, maxMs, Strategy, IsReadOnly);
         }

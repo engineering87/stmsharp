@@ -58,7 +58,8 @@ namespace STMSharp.Core.Backoff
 
                 BackoffType.Linear =>
                     // Linearly increasing delay: baseDelay * (attempt + 1)
-                    Math.Min(baseDelay * (attempt + 1), maxDelay),
+                    // Use long arithmetic to prevent int overflow on large values.
+                    (int)Math.Min((long)baseDelay * (attempt + 1), maxDelay),
 
                 BackoffType.Constant =>
                     // Always return baseDelay

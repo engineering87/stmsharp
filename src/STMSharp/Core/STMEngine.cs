@@ -61,6 +61,8 @@ namespace STMSharp.Core
             bool readOnly = false,
             CancellationToken cancellationToken = default)
         {
+            ArgumentNullException.ThrowIfNull(action);
+
             // Wrap the synchronous action into the asynchronous overload
             return Atomic<T>(
                 tx =>
@@ -100,6 +102,9 @@ namespace STMSharp.Core
             bool readOnly = false,
             CancellationToken cancellationToken = default)
         {
+            ArgumentNullException.ThrowIfNull(func);
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxAttempts, 0);
+
             int attempt = 0;
 
             // Retry loop for transaction attempts
@@ -158,6 +163,8 @@ namespace STMSharp.Core
             StmOptions? options,
             CancellationToken cancellationToken = default)
         {
+            ArgumentNullException.ThrowIfNull(action);
+
             options ??= StmOptions.Default;
 
             return Atomic<T>(
@@ -204,6 +211,8 @@ namespace STMSharp.Core
             StmOptions? options,
             CancellationToken cancellationToken = default)
         {
+            ArgumentNullException.ThrowIfNull(func);
+
             options ??= StmOptions.Default;
             var (maxAttempts, baseMs, maxMs, strategy, isReadOnly) = options.ToPolicyArgs();
 
