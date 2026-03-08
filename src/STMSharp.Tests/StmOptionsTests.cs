@@ -72,38 +72,19 @@ namespace STMSharp.Tests
         }
 
         [Fact]
-        public async Task ZeroMaxAttempts_StillExecutesAtLeastOnce()
+        public void ZeroMaxAttempts_ThrowsArgumentOutOfRangeException()
         {
-            // StmOptions.ToPolicyArgs() clamps MaxAttempts to Math.Max(1, ...)
-            // so even MaxAttempts=0 should allow one attempt
-            var x = new STMVariable<int>(0);
-            var opts = new StmOptions(MaxAttempts: 0, BaseDelay: TimeSpan.FromMilliseconds(1));
-
-            await STMEngine.Atomic<int>(tx =>
-            {
-                tx.Write(x, 42);
-            }, opts);
-
-            int result = 0;
-            await STMEngine.Atomic<int>(tx => { result = tx.Read(x); });
-            Assert.Equal(42, result);
+            // StmOptions validates MaxAttempts > 0 at construction time
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                new StmOptions(MaxAttempts: 0, BaseDelay: TimeSpan.FromMilliseconds(1)));
         }
 
         [Fact]
-        public async Task NegativeBaseDelay_DoesNotThrow()
+        public void NegativeBaseDelay_ThrowsArgumentOutOfRangeException()
         {
-            // ToPolicyArgs clamps to 1ms minimum
-            var x = new STMVariable<int>(0);
-            var opts = new StmOptions(MaxAttempts: 1, BaseDelay: TimeSpan.FromMilliseconds(-100));
-
-            await STMEngine.Atomic<int>(tx =>
-            {
-                tx.Write(x, 7);
-            }, opts);
-
-            int result = 0;
-            await STMEngine.Atomic<int>(tx => { result = tx.Read(x); });
-            Assert.Equal(7, result);
+            // StmOptions validates BaseDelay >= TimeSpan.Zero at construction time
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                new StmOptions(MaxAttempts: 1, BaseDelay: TimeSpan.FromMilliseconds(-100)));
         }
     }
 }

@@ -104,6 +104,7 @@ namespace STMSharp.Core
         {
             ArgumentNullException.ThrowIfNull(func);
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxAttempts, 0);
+            ArgumentOutOfRangeException.ThrowIfNegative(initialBackoffMilliseconds);
 
             int attempt = 0;
 

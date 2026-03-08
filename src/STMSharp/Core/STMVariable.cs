@@ -74,16 +74,21 @@ namespace STMSharp.Core
                     continue;
                 }
 
-                // Optional fast-path: avoid reserving if the value would not change.
-                var currentValue = (T)Volatile.Read(ref _boxedValue)!;
-                if (EqualityComparer<T>.Default.Equals(currentValue, value))
-                    return;
-
                 // Reserve: even -> odd
                 if (Interlocked.CompareExchange(ref _version, v + 1, v) != v)
                 {
                     spinner.SpinOnce();
                     continue;
+                }
+
+                // We now hold the reservation — no other writer can modify _boxedValue.
+                // Fast-path: avoid writing if the value would not change.
+                var currentValue = (T)Volatile.Read(ref _boxedValue)!;
+                if (EqualityComparer<T>.Default.Equals(currentValue, value))
+                {
+                    // Undo the reservation without advancing the version.
+                    Interlocked.Exchange(ref _version, v);
+                    return;
                 }
 
                 // Publish new value under our reservation.
@@ -186,7 +191,13 @@ namespace STMSharp.Core
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal void ReleaseAfterAbort()
         {
-            Interlocked.Increment(ref _version); // odd -> even
+            // Guard: only release if we actually hold the reservation (version is odd).
+            // Incrementing an already-even version would corrupt state (odd = reserved).
+            long v = Volatile.Read(ref _version);
+            if ((v & 1L) != 0)
+            {
+                Interlocked.Increment(ref _version); // odd -> even
+            }
         }
     }
 }

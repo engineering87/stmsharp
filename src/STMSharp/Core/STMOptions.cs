@@ -16,6 +16,14 @@ namespace STMSharp.Core
         BackoffType Strategy = BackoffType.ExponentialWithJitter,
         TransactionMode Mode = TransactionMode.ReadWrite)
     {
+        public int MaxAttempts { get; init; } = MaxAttempts > 0
+            ? MaxAttempts
+            : throw new ArgumentOutOfRangeException(nameof(MaxAttempts), "MaxAttempts must be greater than 0.");
+
+        public TimeSpan BaseDelay { get; init; } = BaseDelay >= TimeSpan.Zero
+            ? BaseDelay
+            : throw new ArgumentOutOfRangeException(nameof(BaseDelay), "BaseDelay must be non-negative.");
+
         public static StmOptions Default => new(
             MaxAttempts: 3,
             BaseDelay: TimeSpan.FromMilliseconds(100),
