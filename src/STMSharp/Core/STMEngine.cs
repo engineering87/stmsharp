@@ -238,5 +238,92 @@ namespace STMSharp.Core
 
             throw new TimeoutException($"STM transaction failed after {maxAttempts} attempts");
         }
+
+        /// <summary>
+        /// Executes a transactional function that returns a result, with automatic retries in case of conflict.
+        /// </summary>
+        /// <typeparam name="T">The STM value type managed by the transactional context.</typeparam>
+        /// <typeparam name="TResult">The type of the value returned by the transaction.</typeparam>
+        /// <param name="func">A user-defined synchronous function that reads/writes STM variables and returns a result.</param>
+        /// <param name="maxAttempts">The maximum number of retry attempts before failing.</param>
+        /// <param name="initialBackoffMilliseconds">The base delay used for calculating backoff between retries.</param>
+        /// <param name="backoffType">The backoff algorithm to apply on conflict.</param>
+        /// <param name="readOnly">Whether the transaction should be executed in read-only mode.</param>
+        /// <param name="cancellationToken">Token used to cancel the operation externally.</param>
+        /// <returns>The value returned by <paramref name="func"/> after a successful commit.</returns>
+        public static async Task<TResult> Atomic<T, TResult>(
+            Func<ITransaction<T>, TResult> func,
+            int maxAttempts = DefaultMaxAttempts,
+            int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds,
+            BackoffType backoffType = DefaultBackoffType,
+            bool readOnly = false,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(func);
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxAttempts, 0);
+            ArgumentOutOfRangeException.ThrowIfNegative(initialBackoffMilliseconds);
+
+            int attempt = 0;
+
+            while (attempt < maxAttempts)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var transaction = new Transaction<T>(readOnly);
+
+                TResult result = func(transaction);
+
+                if (transaction.Commit())
+                    return result;
+
+                attempt++;
+
+                int delay = BackoffPolicy.GetDelayMilliseconds(backoffType, attempt, initialBackoffMilliseconds);
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            }
+
+            throw new TimeoutException($"STM transaction failed after {maxAttempts} attempts");
+        }
+
+        /// <summary>
+        /// Executes a transactional function that returns a result, using <see cref="StmOptions"/> for configuration.
+        /// </summary>
+        /// <typeparam name="T">The STM value type managed by the transactional context.</typeparam>
+        /// <typeparam name="TResult">The type of the value returned by the transaction.</typeparam>
+        /// <param name="func">A user-defined synchronous function that reads/writes STM variables and returns a result.</param>
+        /// <param name="options">Configuration for retry policy, delays, backoff strategy and transaction mode.</param>
+        /// <param name="cancellationToken">Token used to cancel the operation externally.</param>
+        /// <returns>The value returned by <paramref name="func"/> after a successful commit.</returns>
+        public static async Task<TResult> Atomic<T, TResult>(
+            Func<ITransaction<T>, TResult> func,
+            StmOptions? options,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(func);
+
+            options ??= StmOptions.Default;
+            var (maxAttempts, baseMs, maxMs, strategy, isReadOnly) = options.ToPolicyArgs();
+
+            int attempt = 0;
+
+            while (attempt < maxAttempts)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var transaction = new Transaction<T>(isReadOnly);
+
+                TResult result = func(transaction);
+
+                if (transaction.Commit())
+                    return result;
+
+                attempt++;
+
+                int delay = BackoffPolicy.GetDelayMilliseconds(strategy, attempt, baseMs, maxMs);
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            }
+
+            throw new TimeoutException($"STM transaction failed after {maxAttempts} attempts");
+        }
     }
 }

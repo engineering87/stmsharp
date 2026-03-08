@@ -41,8 +41,7 @@ namespace STMSharp.Core
             var (value, version) = variable.ReadWithVersion();
             _reads[variable] = value;
 
-            if (!_snapshotVersions.ContainsKey(variable))
-                _snapshotVersions[variable] = version;
+            _snapshotVersions.TryAdd(variable, version);
 
             return value;
         }
@@ -108,20 +107,23 @@ namespace STMSharp.Core
             }
 
             // Deterministic ordering: acquire reservations by per-variable unique Id (total order).
-            var writeKeys = _writes.Keys
-                .Select(v => v as STMVariable<T>)
-                .ToArray();
-
-            // Defensive: should never happen because ISTMVariable<T> is internal and STMVariable<T> is the implementation.
-            if (writeKeys.Any(v => v is null))
+            var writeKeys = new STMVariable<T>[_writes.Count];
+            int idx = 0;
+            foreach (var w in _writes.Keys)
             {
-                Interlocked.Increment(ref _retryCount);
-                Interlocked.Increment(ref _conflictCount);
-                Clear();
-                return false;
+                // Defensive: should never happen because ISTMVariable<T> is internal
+                // and STMVariable<T> is the only implementation.
+                if (w is not STMVariable<T> stmVar)
+                {
+                    Interlocked.Increment(ref _retryCount);
+                    Interlocked.Increment(ref _conflictCount);
+                    Clear();
+                    return false;
+                }
+                writeKeys[idx++] = stmVar;
             }
 
-            Array.Sort(writeKeys!, (a, b) => a!.Id.CompareTo(b!.Id));
+            Array.Sort(writeKeys, (a, b) => a.Id.CompareTo(b.Id));
 
             var acquired = new List<STMVariable<T>>(writeKeys.Length);
 
@@ -138,11 +140,11 @@ namespace STMSharp.Core
 
             try
             {
-                foreach (var w in writeKeys!)
+                foreach (var w in writeKeys)
                 {
                     var snapVersion = _snapshotVersions[w];
 
-                    if (!w!.TryAcquireForWrite(snapVersion))
+                    if (!w.TryAcquireForWrite(snapVersion))
                         return AbortWithRelease();
 
                     acquired.Add(w);
@@ -162,9 +164,9 @@ namespace STMSharp.Core
                         return AbortWithRelease();
                 }
 
-                foreach (var w in writeKeys!)
+                foreach (var w in writeKeys)
                 {
-                    w!.WriteAndRelease(_writes[w]);
+                    w.WriteAndRelease(_writes[w]);
                 }
 
                 Clear();

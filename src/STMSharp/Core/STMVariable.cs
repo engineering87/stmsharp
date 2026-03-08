@@ -157,8 +157,8 @@ namespace STMSharp.Core
                 T value = Read();
                 long v2 = Version;
 
-                // Valid snapshot: unchanged and even
-                if (v1 == v2 && (v1 & 1L) == 0)
+                // Valid snapshot: version unchanged (implies still even)
+                if (v1 == v2)
                     return (value, v1);
 
                 spinner.SpinOnce();

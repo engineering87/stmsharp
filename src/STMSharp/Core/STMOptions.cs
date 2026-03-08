@@ -24,7 +24,7 @@ namespace STMSharp.Core
             ? BaseDelay
             : throw new ArgumentOutOfRangeException(nameof(BaseDelay), "BaseDelay must be non-negative.");
 
-        public static StmOptions Default => new(
+        private static readonly StmOptions s_default = new(
             MaxAttempts: 3,
             BaseDelay: TimeSpan.FromMilliseconds(100),
             MaxDelay: TimeSpan.FromMilliseconds(2000),
@@ -32,7 +32,11 @@ namespace STMSharp.Core
             Mode: TransactionMode.ReadWrite
         );
 
-        public static StmOptions ReadOnly => Default with { Mode = TransactionMode.ReadOnly };
+        private static readonly StmOptions s_readOnly = s_default with { Mode = TransactionMode.ReadOnly };
+
+        public static StmOptions Default => s_default;
+
+        public static StmOptions ReadOnly => s_readOnly;
 
         public bool IsReadOnly => Mode == TransactionMode.ReadOnly;
 
