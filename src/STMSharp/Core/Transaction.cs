@@ -12,21 +12,23 @@ namespace STMSharp.Core
     {
         // Track variables by reference identity (avoid surprises with custom Equals/GetHashCode).
         private readonly Dictionary<ISTMVariable<T>, T> _reads =
-            new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+            new(ReferenceEqualityComparer.Instance);
 
         private readonly Dictionary<ISTMVariable<T>, T> _writes =
-            new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+            new(ReferenceEqualityComparer.Instance);
 
         private readonly Dictionary<ISTMVariable<T>, long> _snapshotVersions =
-            new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+            new(ReferenceEqualityComparer.Instance);
 
         private static int _conflictCount;
         private static int _retryCount;
+        private static int _unresolvedConflictCount;
 
         private readonly bool _isReadOnly = isReadOnly;
 
         public static int ConflictCount => Volatile.Read(ref _conflictCount);
         public static int RetryCount => Volatile.Read(ref _retryCount);
+        public static int UnresolvedConflictCount => Volatile.Read(ref _unresolvedConflictCount);
 
         public T Read(ISTMVariable<T> variable)
         {
@@ -191,10 +193,13 @@ namespace STMSharp.Core
             _snapshotVersions.Clear();
         }
 
+        public static void IncrementUnresolvedConflictCount() => Interlocked.Increment(ref _unresolvedConflictCount);
+
         public static void ResetCounters()
         {
             Interlocked.Exchange(ref _conflictCount, 0);
             Interlocked.Exchange(ref _retryCount, 0);
+            Interlocked.Exchange(ref _unresolvedConflictCount, 0);
         }
 
         T ITransaction<T>.Read(STMVariable<T> variable) => Read(variable);

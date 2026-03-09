@@ -135,6 +135,7 @@ namespace STMSharp.Core
             }
 
             // All attempts failed: throw timeout exception
+            Transaction<T>.IncrementUnresolvedConflictCount();
             throw new TimeoutException($"STM transaction failed after {maxAttempts} attempts");
         }
 
@@ -236,6 +237,7 @@ namespace STMSharp.Core
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
 
+            Transaction<T>.IncrementUnresolvedConflictCount();
             throw new TimeoutException($"STM transaction failed after {maxAttempts} attempts");
         }
 
@@ -282,6 +284,7 @@ namespace STMSharp.Core
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
 
+            Transaction<T>.IncrementUnresolvedConflictCount();
             throw new TimeoutException($"STM transaction failed after {maxAttempts} attempts");
         }
 
@@ -323,6 +326,7 @@ namespace STMSharp.Core
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
 
+            Transaction<T>.IncrementUnresolvedConflictCount();
             throw new TimeoutException($"STM transaction failed after {maxAttempts} attempts");
         }
     }

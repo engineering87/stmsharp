@@ -22,5 +22,10 @@ namespace STMSharp.Core
         /// Returns the total number of retry attempts for Transaction&lt;T&gt;.
         /// </summary>
         public static int GetRetryCount<T>() => Transaction<T>.RetryCount;
+
+        /// <summary>
+        /// Returns the total number of unresolved conflicts for Transaction&lt;T&gt;.
+        /// </summary>
+        public static int GetUnresolvedConflictCount<T>() => Transaction<T>.UnresolvedConflictCount;
     }
 }
