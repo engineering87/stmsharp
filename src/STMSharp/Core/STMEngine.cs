@@ -34,6 +34,7 @@ namespace STMSharp.Core
     {
         private const int DefaultMaxAttempts = 3;
         private const int DefaultInitialBackoffMilliseconds = 100;
+        private const int DefaultMaxBackoffMilliseconds = 2000;
         private const BackoffType DefaultBackoffType = BackoffType.ExponentialWithJitter;
 
         /// <summary>
@@ -46,6 +47,7 @@ namespace STMSharp.Core
         /// <param name="action">A user-defined synchronous action containing transactional logic.</param>
         /// <param name="maxAttempts">The maximum number of retry attempts before failing.</param>
         /// <param name="initialBackoffMilliseconds">The base delay used for calculating backoff between retries.</param>
+        /// <param name="maxBackoffMilliseconds">The maximum delay cap for backoff calculations.</param>
         /// <param name="backoffType">The backoff algorithm to apply on conflict (e.g., exponential, jitter, constant).</param>
         /// <param name="readOnly">Whether the transaction should be executed in read-only mode (disallows writes).</param>
         /// <param name="cancellationToken">Token used to cancel the operation externally.</param>
@@ -57,6 +59,7 @@ namespace STMSharp.Core
             Action<ITransaction<T>> action,
             int maxAttempts = DefaultMaxAttempts,
             int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds,
+            int maxBackoffMilliseconds = DefaultMaxBackoffMilliseconds,
             BackoffType backoffType = DefaultBackoffType,
             bool readOnly = false,
             CancellationToken cancellationToken = default)
@@ -72,6 +75,7 @@ namespace STMSharp.Core
                 },
                 maxAttempts,
                 initialBackoffMilliseconds,
+                maxBackoffMilliseconds,
                 backoffType,
                 readOnly,
                 cancellationToken);
@@ -87,6 +91,7 @@ namespace STMSharp.Core
         /// <param name="func">A user-defined asynchronous function containing transactional logic.</param>
         /// <param name="maxAttempts">The maximum number of retry attempts before failing.</param>
         /// <param name="initialBackoffMilliseconds">The base delay used for calculating backoff between retries.</param>
+        /// <param name="maxBackoffMilliseconds">The maximum delay cap for backoff calculations.</param>
         /// <param name="backoffType">The backoff algorithm to apply on conflict (e.g., exponential, jitter, constant).</param>
         /// <param name="readOnly">Whether the transaction should be executed in read-only mode (disallows writes).</param>
         /// <param name="cancellationToken">Token used to cancel the operation externally.</param>
@@ -98,6 +103,7 @@ namespace STMSharp.Core
             Func<ITransaction<T>, Task> func,
             int maxAttempts = DefaultMaxAttempts,
             int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds,
+            int maxBackoffMilliseconds = DefaultMaxBackoffMilliseconds,
             BackoffType backoffType = DefaultBackoffType,
             bool readOnly = false,
             CancellationToken cancellationToken = default)
@@ -105,6 +111,7 @@ namespace STMSharp.Core
             ArgumentNullException.ThrowIfNull(func);
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxAttempts, 0);
             ArgumentOutOfRangeException.ThrowIfNegative(initialBackoffMilliseconds);
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxBackoffMilliseconds, 0);
 
             int attempt = 0;
 
@@ -130,7 +137,7 @@ namespace STMSharp.Core
                 attempt++;
 
                 // Conflict detected: wait before retrying
-                int delay = BackoffPolicy.GetDelayMilliseconds(backoffType, attempt, initialBackoffMilliseconds);
+                int delay = BackoffPolicy.GetDelayMilliseconds(backoffType, attempt, initialBackoffMilliseconds, maxBackoffMilliseconds);
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
 
@@ -249,6 +256,7 @@ namespace STMSharp.Core
         /// <param name="func">A user-defined synchronous function that reads/writes STM variables and returns a result.</param>
         /// <param name="maxAttempts">The maximum number of retry attempts before failing.</param>
         /// <param name="initialBackoffMilliseconds">The base delay used for calculating backoff between retries.</param>
+        /// <param name="maxBackoffMilliseconds">The maximum delay cap for backoff calculations.</param>
         /// <param name="backoffType">The backoff algorithm to apply on conflict.</param>
         /// <param name="readOnly">Whether the transaction should be executed in read-only mode.</param>
         /// <param name="cancellationToken">Token used to cancel the operation externally.</param>
@@ -257,6 +265,7 @@ namespace STMSharp.Core
             Func<ITransaction<T>, TResult> func,
             int maxAttempts = DefaultMaxAttempts,
             int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds,
+            int maxBackoffMilliseconds = DefaultMaxBackoffMilliseconds,
             BackoffType backoffType = DefaultBackoffType,
             bool readOnly = false,
             CancellationToken cancellationToken = default)
@@ -264,6 +273,7 @@ namespace STMSharp.Core
             ArgumentNullException.ThrowIfNull(func);
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxAttempts, 0);
             ArgumentOutOfRangeException.ThrowIfNegative(initialBackoffMilliseconds);
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxBackoffMilliseconds, 0);
 
             int attempt = 0;
 
@@ -280,7 +290,7 @@ namespace STMSharp.Core
 
                 attempt++;
 
-                int delay = BackoffPolicy.GetDelayMilliseconds(backoffType, attempt, initialBackoffMilliseconds);
+                int delay = BackoffPolicy.GetDelayMilliseconds(backoffType, attempt, initialBackoffMilliseconds, maxBackoffMilliseconds);
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
 
