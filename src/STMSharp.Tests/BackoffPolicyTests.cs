@@ -91,17 +91,17 @@ namespace STMSharp.Tests
         }
 
         [Fact]
-        public void NegativeBaseDelay_IsClampedToOne()
+        public void NegativeBaseDelay_IsClampedToZero()
         {
             var delay = BackoffPolicy.GetDelayMilliseconds(BackoffType.Constant, 0, baseDelay: -50, maxDelay: 10000);
-            Assert.Equal(1, delay);
+            Assert.Equal(0, delay);
         }
 
         [Fact]
-        public void NegativeMaxDelay_IsClampedToOne()
+        public void NegativeMaxDelay_IsClampedToZero()
         {
             var delay = BackoffPolicy.GetDelayMilliseconds(BackoffType.Exponential, 10, baseDelay: 100, maxDelay: -1);
-            Assert.Equal(1, delay);
+            Assert.Equal(0, delay);
         }
 
         [Fact]

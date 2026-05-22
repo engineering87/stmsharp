@@ -6,7 +6,16 @@ namespace STMSharp.Core
 {
     /// <summary>
     /// Software Transactional Memory transaction with optimistic read snapshots
-    /// and a lock-free CAS-based commit protocol (reserve → revalidate → write&release).
+    /// and a lock-free CAS-based commit protocol (reserve → revalidate → write&amp;release).
+    ///
+    /// <para>
+    /// <b>Thread-safety:</b> a <see cref="Transaction{T}"/> instance is NOT thread-safe.
+    /// The transactional delegate passed to <c>STMEngine.Atomic</c> must execute the
+    /// <c>Read</c>/<c>Write</c> calls on a single logical flow. Sharing the same
+    /// <see cref="ITransaction{T}"/> across concurrent threads (e.g. via
+    /// <c>Task.WhenAll</c>) will corrupt the internal read/write/snapshot sets.
+    /// Concurrency is provided across distinct transactions, not within one.
+    /// </para>
     /// </summary>
     internal class Transaction<T>(bool isReadOnly = false) : ITransaction<T>
     {

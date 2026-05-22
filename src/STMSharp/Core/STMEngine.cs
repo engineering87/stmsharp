@@ -1,4 +1,4 @@
-﻿// (c) 2024-2025 Francesco Del Re <francesco.delre.87@gmail.com>
+// (c) 2024-2025 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
 using STMSharp.Core.Backoff;
 using STMSharp.Core.Interfaces;
@@ -21,9 +21,9 @@ namespace STMSharp.Core
     ///
     /// Typical usage:
     /// <code>
-    /// var shared = new STMVariable<int>(0);
+    /// var shared = new STMVariable&lt;int&gt;(0);
     ///
-    /// await STMEngine.Atomic<int>(tx =>
+    /// await STMEngine.Atomic&lt;int&gt;(tx =&gt;
     /// {
     ///     var value = tx.Read(shared);
     ///     tx.Write(shared, value + 1);
@@ -40,21 +40,6 @@ namespace STMSharp.Core
         /// <summary>
         /// Executes a transactional action with automatic retries in case of conflict.
         /// </summary>
-        /// <typeparam name="T">
-        /// The STM value type used by <see cref="STMVariable{T}"/> and managed by the transactional context.
-        /// This is not a return type; the method completes when the transaction commits or throws on failure.
-        /// </typeparam>
-        /// <param name="action">A user-defined synchronous action containing transactional logic.</param>
-        /// <param name="maxAttempts">The maximum number of retry attempts before failing.</param>
-        /// <param name="initialBackoffMilliseconds">The base delay used for calculating backoff between retries.</param>
-        /// <param name="maxBackoffMilliseconds">The maximum delay cap for backoff calculations.</param>
-        /// <param name="backoffType">The backoff algorithm to apply on conflict (e.g., exponential, jitter, constant).</param>
-        /// <param name="readOnly">Whether the transaction should be executed in read-only mode (disallows writes).</param>
-        /// <param name="cancellationToken">Token used to cancel the operation externally.</param>
-        /// <returns>
-        /// A task that completes when the transaction is successfully committed; otherwise throws if all attempts fail
-        /// or if the operation is cancelled.
-        /// </returns>
         public static Task Atomic<T>(
             Action<ITransaction<T>> action,
             int maxAttempts = DefaultMaxAttempts,
@@ -66,7 +51,6 @@ namespace STMSharp.Core
         {
             ArgumentNullException.ThrowIfNull(action);
 
-            // Wrap the synchronous action into the asynchronous overload
             return Atomic<T>(
                 tx =>
                 {
@@ -84,22 +68,7 @@ namespace STMSharp.Core
         /// <summary>
         /// Executes an asynchronous transactional function with automatic retries in case of conflict.
         /// </summary>
-        /// <typeparam name="T">
-        /// The STM value type used by <see cref="STMVariable{T}"/> and managed by the transactional context.
-        /// This is not a return type; the method completes when the transaction commits or throws on failure.
-        /// </typeparam>
-        /// <param name="func">A user-defined asynchronous function containing transactional logic.</param>
-        /// <param name="maxAttempts">The maximum number of retry attempts before failing.</param>
-        /// <param name="initialBackoffMilliseconds">The base delay used for calculating backoff between retries.</param>
-        /// <param name="maxBackoffMilliseconds">The maximum delay cap for backoff calculations.</param>
-        /// <param name="backoffType">The backoff algorithm to apply on conflict (e.g., exponential, jitter, constant).</param>
-        /// <param name="readOnly">Whether the transaction should be executed in read-only mode (disallows writes).</param>
-        /// <param name="cancellationToken">Token used to cancel the operation externally.</param>
-        /// <returns>
-        /// A task that completes when the transaction is successfully committed; otherwise throws if all attempts fail
-        /// or if the operation is cancelled.
-        /// </returns>
-        public static async Task Atomic<T>(
+        public static Task Atomic<T>(
             Func<ITransaction<T>, Task> func,
             int maxAttempts = DefaultMaxAttempts,
             int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds,
@@ -111,62 +80,21 @@ namespace STMSharp.Core
             ArgumentNullException.ThrowIfNull(func);
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxAttempts, 0);
             ArgumentOutOfRangeException.ThrowIfNegative(initialBackoffMilliseconds);
-            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxBackoffMilliseconds, 0);
+            ArgumentOutOfRangeException.ThrowIfNegative(maxBackoffMilliseconds);
 
-            int attempt = 0;
-
-            // Retry loop for transaction attempts
-            while (attempt < maxAttempts)
-            {
-                // Check for cancellation request
-                cancellationToken.ThrowIfCancellationRequested();
-
-                // Create a new transaction instance for each attempt (internal implementation)
-                var transaction = new Transaction<T>(readOnly);
-
-                // Execute user-provided transactional logic
-                await func(transaction).ConfigureAwait(false);
-
-                // Attempt to commit: returns true if no conflict detected
-                if (transaction.Commit())
-                {
-                    // Commit successful, exit method
-                    return;
-                }
-
-                attempt++;
-
-                // Conflict detected: wait before retrying
-                int delay = BackoffPolicy.GetDelayMilliseconds(backoffType, attempt, initialBackoffMilliseconds, maxBackoffMilliseconds);
-                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
-            }
-
-            // All attempts failed: throw timeout exception
-            Transaction<T>.IncrementUnresolvedConflictCount();
-            throw new TimeoutException($"STM transaction failed after {maxAttempts} attempts");
+            return RunWithRetryAsync<T, object?>(
+                async tx => { await func(tx).ConfigureAwait(false); return null; },
+                maxAttempts,
+                initialBackoffMilliseconds,
+                maxBackoffMilliseconds,
+                backoffType,
+                readOnly,
+                cancellationToken);
         }
 
         /// <summary>
-        /// Executes a transactional action using the provided <see cref="StmOptions"/> for retries, backoff and mode.
-        /// This overload accepts a synchronous action and internally wraps it into the asynchronous overload.
+        /// Executes a transactional action using the provided <see cref="StmOptions"/>.
         /// </summary>
-        /// <typeparam name="T">
-        /// The STM value type used by <see cref="STMVariable{T}"/> and managed by the transactional context.
-        /// This is not a return type; the method completes when the transaction commits or throws on failure.
-        /// </typeparam>
-        /// <param name="action">User-defined synchronous action containing the transactional logic.</param>
-        /// <param name="options">
-        /// Configuration for retry policy, delays, backoff strategy and transaction mode. If <c>null</c>, <see cref="StmOptions.Default"/> is used.
-        /// </param>
-        /// <param name="cancellationToken">Token used to cancel the operation externally.</param>
-        /// <returns>
-        /// A task that completes when the transaction is successfully committed; otherwise it throws if all attempts fail
-        /// or if the operation is cancelled.
-        /// </returns>
-        /// <remarks>
-        /// - Honors read-only mode via <see cref="StmOptions.Mode"/>.<br/>
-        /// - Uses the same retry and backoff semantics as the asynchronous overload.
-        /// </remarks>
         public static Task Atomic<T>(
             Action<ITransaction<T>> action,
             StmOptions? options,
@@ -187,35 +115,9 @@ namespace STMSharp.Core
         }
 
         /// <summary>
-        /// Executes a transactional function using the provided <see cref="StmOptions"/> for retries, backoff and mode.
-        /// Automatically retries on conflicts according to the configured policy.
+        /// Executes an asynchronous transactional function using the provided <see cref="StmOptions"/>.
         /// </summary>
-        /// <typeparam name="T">
-        /// The STM value type used by <see cref="STMVariable{T}"/> and managed by the transactional context.
-        /// This is not a return type; the method completes when the transaction commits or throws on failure.
-        /// </typeparam>
-        /// <param name="func">User-defined asynchronous function containing the transactional logic.</param>
-        /// <param name="options">
-        /// Configuration for retry policy, delays (<see cref="StmOptions.BaseDelay"/>, <see cref="StmOptions.MaxDelay"/>),
-        /// backoff strategy (<see cref="StmOptions.Strategy"/>) and transaction mode (<see cref="StmOptions.Mode"/>).
-        /// If <c>null</c>, <see cref="StmOptions.Default"/> is used.
-        /// </param>
-        /// <param name="cancellationToken">Token used to cancel the operation externally.</param>
-        /// <returns>
-        /// A task that completes when the transaction is successfully committed; otherwise it throws if all attempts fail
-        /// or if the operation is cancelled.
-        /// </returns>
-        /// <exception cref="TimeoutException">
-        /// Thrown when all attempts (see <see cref="StmOptions.MaxAttempts"/>) are exhausted without a successful commit.
-        /// </exception>
-        /// <exception cref="OperationCanceledException">
-        /// Thrown if <paramref name="cancellationToken"/> is signaled during execution.
-        /// </exception>
-        /// <remarks>
-        /// Read-only transactions validate snapshots but never persist writes. Backoff delays are computed via
-        /// <see cref="BackoffPolicy.GetDelayMilliseconds(BackoffType,int,int,int)"/> using the configured strategy and delay bounds.
-        /// </remarks>
-        public static async Task Atomic<T>(
+        public static Task Atomic<T>(
             Func<ITransaction<T>, Task> func,
             StmOptions? options,
             CancellationToken cancellationToken = default)
@@ -225,43 +127,20 @@ namespace STMSharp.Core
             options ??= StmOptions.Default;
             var (maxAttempts, baseMs, maxMs, strategy, isReadOnly) = options.ToPolicyArgs();
 
-            int attempt = 0;
-
-            while (attempt < maxAttempts)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var transaction = new Transaction<T>(isReadOnly);
-
-                await func(transaction).ConfigureAwait(false);
-
-                if (transaction.Commit())
-                    return;
-
-                attempt++;
-
-                int delay = BackoffPolicy.GetDelayMilliseconds(strategy, attempt, baseMs, maxMs);
-                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
-            }
-
-            Transaction<T>.IncrementUnresolvedConflictCount();
-            throw new TimeoutException($"STM transaction failed after {maxAttempts} attempts");
+            return RunWithRetryAsync<T, object?>(
+                async tx => { await func(tx).ConfigureAwait(false); return null; },
+                maxAttempts,
+                baseMs,
+                maxMs,
+                strategy,
+                isReadOnly,
+                cancellationToken);
         }
 
         /// <summary>
-        /// Executes a transactional function that returns a result, with automatic retries in case of conflict.
+        /// Executes a transactional synchronous function that returns a result, with automatic retries.
         /// </summary>
-        /// <typeparam name="T">The STM value type managed by the transactional context.</typeparam>
-        /// <typeparam name="TResult">The type of the value returned by the transaction.</typeparam>
-        /// <param name="func">A user-defined synchronous function that reads/writes STM variables and returns a result.</param>
-        /// <param name="maxAttempts">The maximum number of retry attempts before failing.</param>
-        /// <param name="initialBackoffMilliseconds">The base delay used for calculating backoff between retries.</param>
-        /// <param name="maxBackoffMilliseconds">The maximum delay cap for backoff calculations.</param>
-        /// <param name="backoffType">The backoff algorithm to apply on conflict.</param>
-        /// <param name="readOnly">Whether the transaction should be executed in read-only mode.</param>
-        /// <param name="cancellationToken">Token used to cancel the operation externally.</param>
-        /// <returns>The value returned by <paramref name="func"/> after a successful commit.</returns>
-        public static async Task<TResult> Atomic<T, TResult>(
+        public static Task<TResult> Atomic<T, TResult>(
             Func<ITransaction<T>, TResult> func,
             int maxAttempts = DefaultMaxAttempts,
             int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds,
@@ -273,41 +152,49 @@ namespace STMSharp.Core
             ArgumentNullException.ThrowIfNull(func);
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxAttempts, 0);
             ArgumentOutOfRangeException.ThrowIfNegative(initialBackoffMilliseconds);
-            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxBackoffMilliseconds, 0);
+            ArgumentOutOfRangeException.ThrowIfNegative(maxBackoffMilliseconds);
 
-            int attempt = 0;
-
-            while (attempt < maxAttempts)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var transaction = new Transaction<T>(readOnly);
-
-                TResult result = func(transaction);
-
-                if (transaction.Commit())
-                    return result;
-
-                attempt++;
-
-                int delay = BackoffPolicy.GetDelayMilliseconds(backoffType, attempt, initialBackoffMilliseconds, maxBackoffMilliseconds);
-                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
-            }
-
-            Transaction<T>.IncrementUnresolvedConflictCount();
-            throw new TimeoutException($"STM transaction failed after {maxAttempts} attempts");
+            return RunWithRetryAsync<T, TResult>(
+                tx => Task.FromResult(func(tx)),
+                maxAttempts,
+                initialBackoffMilliseconds,
+                maxBackoffMilliseconds,
+                backoffType,
+                readOnly,
+                cancellationToken);
         }
 
         /// <summary>
-        /// Executes a transactional function that returns a result, using <see cref="StmOptions"/> for configuration.
+        /// Executes a transactional asynchronous function that returns a result, with automatic retries.
         /// </summary>
-        /// <typeparam name="T">The STM value type managed by the transactional context.</typeparam>
-        /// <typeparam name="TResult">The type of the value returned by the transaction.</typeparam>
-        /// <param name="func">A user-defined synchronous function that reads/writes STM variables and returns a result.</param>
-        /// <param name="options">Configuration for retry policy, delays, backoff strategy and transaction mode.</param>
-        /// <param name="cancellationToken">Token used to cancel the operation externally.</param>
-        /// <returns>The value returned by <paramref name="func"/> after a successful commit.</returns>
-        public static async Task<TResult> Atomic<T, TResult>(
+        public static Task<TResult> Atomic<T, TResult>(
+            Func<ITransaction<T>, Task<TResult>> func,
+            int maxAttempts = DefaultMaxAttempts,
+            int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds,
+            int maxBackoffMilliseconds = DefaultMaxBackoffMilliseconds,
+            BackoffType backoffType = DefaultBackoffType,
+            bool readOnly = false,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(func);
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxAttempts, 0);
+            ArgumentOutOfRangeException.ThrowIfNegative(initialBackoffMilliseconds);
+            ArgumentOutOfRangeException.ThrowIfNegative(maxBackoffMilliseconds);
+
+            return RunWithRetryAsync<T, TResult>(
+                func,
+                maxAttempts,
+                initialBackoffMilliseconds,
+                maxBackoffMilliseconds,
+                backoffType,
+                readOnly,
+                cancellationToken);
+        }
+
+        /// <summary>
+        /// Executes a transactional synchronous function returning a result, using <see cref="StmOptions"/>.
+        /// </summary>
+        public static Task<TResult> Atomic<T, TResult>(
             Func<ITransaction<T>, TResult> func,
             StmOptions? options,
             CancellationToken cancellationToken = default)
@@ -317,6 +204,51 @@ namespace STMSharp.Core
             options ??= StmOptions.Default;
             var (maxAttempts, baseMs, maxMs, strategy, isReadOnly) = options.ToPolicyArgs();
 
+            return RunWithRetryAsync<T, TResult>(
+                tx => Task.FromResult(func(tx)),
+                maxAttempts,
+                baseMs,
+                maxMs,
+                strategy,
+                isReadOnly,
+                cancellationToken);
+        }
+
+        /// <summary>
+        /// Executes a transactional asynchronous function returning a result, using <see cref="StmOptions"/>.
+        /// </summary>
+        public static Task<TResult> Atomic<T, TResult>(
+            Func<ITransaction<T>, Task<TResult>> func,
+            StmOptions? options,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(func);
+
+            options ??= StmOptions.Default;
+            var (maxAttempts, baseMs, maxMs, strategy, isReadOnly) = options.ToPolicyArgs();
+
+            return RunWithRetryAsync<T, TResult>(
+                func,
+                maxAttempts,
+                baseMs,
+                maxMs,
+                strategy,
+                isReadOnly,
+                cancellationToken);
+        }
+
+        // ---------------------------------------------------------------------
+        // Shared retry/backoff loop. All public Atomic overloads route here.
+        // ---------------------------------------------------------------------
+        private static async Task<TResult> RunWithRetryAsync<T, TResult>(
+            Func<ITransaction<T>, Task<TResult>> func,
+            int maxAttempts,
+            int baseMs,
+            int maxMs,
+            BackoffType strategy,
+            bool isReadOnly,
+            CancellationToken cancellationToken)
+        {
             int attempt = 0;
 
             while (attempt < maxAttempts)
@@ -325,15 +257,20 @@ namespace STMSharp.Core
 
                 var transaction = new Transaction<T>(isReadOnly);
 
-                TResult result = func(transaction);
+                TResult result = await func(transaction).ConfigureAwait(false);
 
                 if (transaction.Commit())
                     return result;
 
                 attempt++;
 
+                // No need to wait after the final failed attempt: we're about to throw.
+                if (attempt >= maxAttempts)
+                    break;
+
                 int delay = BackoffPolicy.GetDelayMilliseconds(strategy, attempt, baseMs, maxMs);
-                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                if (delay > 0)
+                    await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
 
             Transaction<T>.IncrementUnresolvedConflictCount();

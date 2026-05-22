@@ -184,6 +184,13 @@ namespace STMSharp.Core
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal void WriteAndRelease(T value)
         {
+            // MUST NOT THROW: this is called while holding the write-set reservation
+            // during the commit's publish phase. If this method threw between two
+            // variables, the write-set would be left in an inconsistent state
+            // (some variables published, others still reserved/unpublished).
+            // The operations below (Volatile.Write of a managed reference and
+            // Interlocked.Increment on a long field) cannot throw under normal
+            // managed execution.
             Volatile.Write(ref _boxedValue, value!);
             Interlocked.Increment(ref _version); // odd -> even
         }
