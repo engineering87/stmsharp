@@ -15,16 +15,30 @@ namespace STMSharp.Core
     /// the global clock to obtain a write version, revalidates its read set, then publishes the
     /// buffered values and stamps the new version. Read-only transactions commit with no extra work.
     ///
+    /// The read set and write set are held in append-only buffers with linear-scan lookup rather
+    /// than dictionaries. For the small transactions that are typical of STM this allocates far
+    /// less and is faster than hashing; lookups are O(n) in the set size, so very large sets pay
+    /// a quadratic cost. A dictionary fallback above a size threshold can be added later if needed.
+    ///
     /// Thread-safety: an instance is not thread-safe; see <see cref="ITransaction"/>.
     /// </summary>
     internal sealed class StmTransaction : ITransaction
     {
-        // Tracked by reference identity (independent of any custom Equals/GetHashCode).
-        private readonly Dictionary<IStmVariable, long> _reads =
-            new(ReferenceEqualityComparer.Instance);
+        private const int InitialCapacity = 4;
 
-        private readonly Dictionary<IStmVariable, object?> _writes =
-            new(ReferenceEqualityComparer.Instance);
+        // Deterministic lock ordering by variable Id, cached once to avoid per-commit allocation.
+        private static readonly IComparer<IStmVariable> IdComparer =
+            Comparer<IStmVariable>.Create(static (a, b) => a.Id.CompareTo(b.Id));
+
+        // Read set: the distinct variables read by the transaction. The observed version is not
+        // stored because commit revalidates against the live version-lock word.
+        private IStmVariable[]? _readVars;
+        private int _readCount;
+
+        // Write set: parallel buffers of variables and their pending (boxed) values.
+        private IStmVariable[]? _writeVars;
+        private object?[]? _writeVals;
+        private int _writeCount;
 
         private readonly bool _isReadOnly;
         private readonly long _readVersion;
@@ -43,14 +57,17 @@ namespace STMSharp.Core
         {
             ArgumentNullException.ThrowIfNull(variable);
 
-            // Read-your-own-writes.
-            if (_writes.TryGetValue(variable, out var pending))
-                return (T)pending!;
+            // Read-your-own-writes: return the pending value if already written in this transaction.
+            for (int i = 0; i < _writeCount; i++)
+            {
+                if (ReferenceEquals(_writeVars![i], variable))
+                    return (T)_writeVals![i]!;
+            }
 
-            if (!variable.TryReadForTransaction(_readVersion, out var value, out var word))
+            if (!variable.TryReadForTransaction(_readVersion, out var value, out _))
                 throw new TransactionRetryException();
 
-            _reads[variable] = word;
+            AddRead(variable);
             return value;
         }
 
@@ -61,8 +78,31 @@ namespace STMSharp.Core
             if (_isReadOnly)
                 throw new InvalidOperationException("Cannot Write in a read-only transaction.");
 
-            // Boxes value types; de-boxing is deferred to the performance pass.
-            _writes[variable] = value;
+            // Boxes value types; de-boxing the write set is a separate, later step.
+            for (int i = 0; i < _writeCount; i++)
+            {
+                if (ReferenceEquals(_writeVars![i], variable))
+                {
+                    _writeVals![i] = value;
+                    return;
+                }
+            }
+
+            if (_writeVars is null)
+            {
+                _writeVars = new IStmVariable[InitialCapacity];
+                _writeVals = new object?[InitialCapacity];
+            }
+            else if (_writeCount == _writeVars.Length)
+            {
+                int n = _writeVars.Length * 2;
+                Array.Resize(ref _writeVars, n);
+                Array.Resize(ref _writeVals, n);
+            }
+
+            _writeVars![_writeCount] = variable;
+            _writeVals![_writeCount] = value;
+            _writeCount++;
         }
 
         /// <summary>
@@ -72,24 +112,22 @@ namespace STMSharp.Core
         {
             // Read-only or no writes: every read was validated against the start version,
             // so the observed snapshot is consistent and no commit-time work is required.
-            if (_isReadOnly || _writes.Count == 0)
+            if (_isReadOnly || _writeCount == 0)
                 return true;
 
             // Acquire write-set locks in a deterministic total order (by Id) to avoid deadlock.
-            var writeVars = new IStmVariable[_writes.Count];
-            _writes.Keys.CopyTo(writeVars, 0);
-            Array.Sort(writeVars, static (a, b) => a.Id.CompareTo(b.Id));
+            Array.Sort(_writeVars!, _writeVals!, 0, _writeCount, IdComparer);
 
-            // Number of write-set locks currently held (a prefix of the sorted writeVars).
+            // Number of write-set locks currently held (a prefix of the sorted write set).
             int locked = 0;
             long writeVersion = 0; // always overwritten by GlobalVersionClock.Next() before publish
 
             try
             {
-                for (int i = 0; i < writeVars.Length; i++)
+                for (int i = 0; i < _writeCount; i++)
                 {
-                    if (!writeVars[i].TryLock())
-                        return ReleaseAndFail(writeVars, locked);
+                    if (!_writeVars![i].TryLock())
+                        return ReleaseAndFail(locked);
 
                     locked++;
                 }
@@ -101,22 +139,22 @@ namespace STMSharp.Core
                 // the read set cannot have changed, so its validation can be skipped.
                 if (writeVersion != _readVersion + 1)
                 {
-                    foreach (var kvp in _reads)
+                    for (int i = 0; i < _readCount; i++)
                     {
-                        var v = kvp.Key;
+                        var v = _readVars![i];
                         long word = v.VersionLockWord;
 
-                        if (_writes.ContainsKey(v))
+                        if (IsInWriteSet(v))
                         {
                             // Locked by us: ensure it was not committed by another writer
                             // between our read and our lock acquisition.
                             if (VersionLock.VersionOf(word) > _readVersion)
-                                return ReleaseAndFail(writeVars, locked);
+                                return ReleaseAndFail(locked);
                         }
                         else
                         {
                             if (VersionLock.IsLocked(word) || VersionLock.VersionOf(word) > _readVersion)
-                                return ReleaseAndFail(writeVars, locked);
+                                return ReleaseAndFail(locked);
                         }
                     }
                 }
@@ -126,28 +164,55 @@ namespace STMSharp.Core
                 // Unexpected failure before publishing: we still hold the first `locked` locks.
                 for (int i = locked - 1; i >= 0; i--)
                 {
-                    try { writeVars[i].Unlock(); } catch { /* best effort */ }
+                    try { _writeVars![i].Unlock(); } catch { /* best effort */ }
                 }
                 throw;
             }
 
             // Publish phase. From here we hold all locks and validation has passed.
             // PublishBoxed and UnlockWithVersion perform only volatile writes and do not throw.
-            foreach (var v in writeVars)
-                v.PublishBoxed(_writes[v]);
+            for (int i = 0; i < _writeCount; i++)
+                _writeVars![i].PublishBoxed(_writeVals![i]);
 
-            foreach (var v in writeVars)
-                v.UnlockWithVersion(writeVersion);
+            for (int i = 0; i < _writeCount; i++)
+                _writeVars![i].UnlockWithVersion(writeVersion);
 
             return true;
         }
 
-        private static bool ReleaseAndFail(IStmVariable[] writeVars, int locked)
+        private bool IsInWriteSet(IStmVariable v)
+        {
+            for (int i = 0; i < _writeCount; i++)
+            {
+                if (ReferenceEquals(_writeVars![i], v))
+                    return true;
+            }
+            return false;
+        }
+
+        private bool ReleaseAndFail(int locked)
         {
             for (int i = locked - 1; i >= 0; i--)
-                writeVars[i].Unlock();
+                _writeVars![i].Unlock();
 
             return false;
+        }
+
+        private void AddRead(IStmVariable v)
+        {
+            // De-duplicate so repeated reads of the same variable do not grow the set.
+            for (int i = 0; i < _readCount; i++)
+            {
+                if (ReferenceEquals(_readVars![i], v))
+                    return;
+            }
+
+            if (_readVars is null)
+                _readVars = new IStmVariable[InitialCapacity];
+            else if (_readCount == _readVars.Length)
+                Array.Resize(ref _readVars, _readVars.Length * 2);
+
+            _readVars![_readCount++] = v;
         }
 
         public static int ConflictCount => Volatile.Read(ref _conflictCount);

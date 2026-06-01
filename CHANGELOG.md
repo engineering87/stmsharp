@@ -47,11 +47,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- The transaction read set and write set are held in append-only array buffers
+  with linear-scan lookup instead of dictionaries, which removes the dominant
+  per-transaction allocation (the two dictionary instances and their backing
+  storage) for the small transactions typical of STM. Lookups are O(n) in the
+  set size; a dictionary fallback above a size threshold can be added later if
+  large transactions warrant it. The read set no longer stores the observed
+  version, since commit revalidates against the live version-lock word.
 - Commit no longer allocates a list to track acquired write-set locks; it tracks
   the number of held locks as an index into the sorted write-set instead. This
   removes one allocation per committing read-write transaction.
 - Added non-generic API benchmarks alongside the legacy ones so the baseline can
-  separate the core cost from the per-call legacy adapter allocation.
+  separate the core cost from the per-call legacy adapter allocation, and a
+  contended write benchmark that exercises the retry path.
 
 ### Notes
 

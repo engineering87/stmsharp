@@ -126,5 +126,30 @@ namespace STMSharp.PerformanceTests.Benchmarks
             readOnly: true,
             cancellationToken: CancellationToken.None);
         }
+
+        // ---- Contended write (exercises the retry path and its per-attempt allocations) ----
+
+        [Benchmark]
+        public async Task AtomicWriteContended()
+        {
+            const int writers = 8;
+            var shared = _variable;
+            var tasks = new Task[writers];
+
+            for (int i = 0; i < writers; i++)
+            {
+                tasks[i] = Task.Run(() => STMEngine.Atomic(tx =>
+                {
+                    var value = tx.Read(shared);
+                    tx.Write(shared, value + 1);
+                },
+                maxAttempts: 64, // generous so contention does not exhaust the budget during measurement
+                initialBackoffMilliseconds: InitialBackoffMilliseconds,
+                backoffType: Backoff,
+                cancellationToken: CancellationToken.None));
+            }
+
+            await Task.WhenAll(tasks);
+        }
     }
 }
