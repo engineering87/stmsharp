@@ -14,15 +14,14 @@ namespace STMSharp.Tests
         }
 
         [Fact]
-        public void InitialVersion_IsZeroAndEven()
+        public void InitialVersion_IsZero()
         {
             var x = new STMVariable<int>(0);
             Assert.Equal(0, x.Version);
-            Assert.True((x.Version & 1L) == 0);
         }
 
         [Fact]
-        public void Write_UpdatesValueAndBumpsVersion()
+        public void Write_UpdatesValueAndAdvancesVersion()
         {
             var x = new STMVariable<int>(0);
             var v0 = x.Version;
@@ -30,8 +29,8 @@ namespace STMSharp.Tests
             x.Write(10);
 
             Assert.Equal(10, x.Read());
+            // The version is a monotonic global commit stamp; it must advance on a change.
             Assert.True(x.Version > v0);
-            Assert.True((x.Version & 1L) == 0); // must remain even
         }
 
         [Fact]
@@ -40,10 +39,10 @@ namespace STMSharp.Tests
             var x = new STMVariable<int>(5);
             var vBefore = x.Version;
 
-            x.Write(5); // same value → fast-path
+            x.Write(5); // same value -> fast-path, no version change
 
             Assert.Equal(5, x.Read());
-            Assert.Equal(vBefore, x.Version); // version should not change
+            Assert.Equal(vBefore, x.Version);
         }
 
         [Fact]
@@ -54,23 +53,22 @@ namespace STMSharp.Tests
             var (value, version) = x.ReadWithVersion();
 
             Assert.Equal(99, value);
-            Assert.True((version & 1L) == 0);
             Assert.Equal(x.Version, version);
         }
 
         [Fact]
-        public void IncrementVersion_AdvancesByTwo()
+        public void IncrementVersion_AdvancesVersion()
         {
             var x = new STMVariable<int>(0);
             var v0 = x.Version;
 
             x.IncrementVersion();
 
-            Assert.Equal(v0 + 2, x.Version);
+            Assert.True(x.Version > v0);
         }
 
         [Fact]
-        public void ConcurrentDirectWrites_AllEvenVersions()
+        public void ConcurrentDirectWrites_LeaveVariableReadableAndUnlocked()
         {
             var x = new STMVariable<int>(0);
             const int writers = 16;
@@ -86,8 +84,11 @@ namespace STMSharp.Tests
 
             Task.WaitAll(tasks);
 
-            // After all concurrent writes, version must be even (no stuck reservation)
-            Assert.True((x.Version & 1L) == 0, $"Version should be even, got {x.Version}");
+            // If any writer had left the variable reserved, ReadWithVersion would spin forever;
+            // its completion confirms there is no stuck reservation.
+            var (value, version) = x.ReadWithVersion();
+            Assert.InRange(value, 0, writers * writesPerThread - 1);
+            Assert.True(version > 0);
         }
 
         [Fact]
@@ -98,9 +99,8 @@ namespace STMSharp.Tests
 
             Assert.Null(x.Read());
 
-            var (value, version) = x.ReadWithVersion();
+            var (value, _) = x.ReadWithVersion();
             Assert.Null(value);
-            Assert.True((version & 1L) == 0);
         }
 
         [Fact]

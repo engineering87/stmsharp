@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+
+- The transaction core is now non-generic: a single transaction can read and
+  write `STMVariable<T>` instances of different element types. The transactional
+  context is exposed through the new non-generic `ITransaction`, whose `Read<T>`
+  and `Write<T>` methods are generic per call. `STMEngine.Atomic` gains overloads
+  that take `Action<ITransaction>` / `Func<ITransaction, ...>` and no longer
+  require an element type argument.
+- The legacy single-type API (`ITransaction<T>`, `STMEngine.Atomic<T>`, and
+  `STMEngine.Atomic<T, TResult>`) is retained for source compatibility and now
+  delegates to the non-generic core through an internal adapter. Existing code
+  continues to compile and run unchanged.
+- Diagnostics are now process-wide rather than per closed generic type. The
+  generic `STMDiagnostics` methods are retained for source compatibility and
+  ignore their type argument.
+- The non-generic value-returning `Atomic<TResult>` takes an asynchronous body,
+  `Func<ITransaction, Task<TResult>>`. A synchronous-result overload is not
+  provided because offering both is ambiguous for any lambda that returns a
+  `Task`. For a synchronous transaction that produces a value, capture the value
+  with the void overload, for example `await Atomic(tx => { result = tx.Read(v); });`.
+- The variable version model changed. `STMVariable<T>.Version` now reports a
+  monotonic commit stamp drawn from a global version clock and is no longer
+  constrained to be even; the write-lock flag is held in a separate bit and is
+  not part of the reported version. `IncrementVersion()` advances the version to
+  a new global stamp rather than by a fixed step.
+
+### Added
+
+- A TL2-style concurrency control protocol providing opacity: a running
+  transaction always observes a consistent snapshot and never a torn
+  intermediate state. Reads are validated against the transaction start version,
+  and an inconsistent read aborts and retries the transaction.
+- A global version clock (`GlobalVersionClock`) and a versioned write-lock word
+  encoding (`VersionLock`) underpinning the protocol.
+- Tests for heterogeneous transactions spanning multiple element types and for
+  the opacity guarantee (no observable torn cross-variable state, stable
+  repeated reads within a transaction).
+
+### Notes
+
+- This is the most concurrency-sensitive change in the 3.0 line. It must be
+  validated by a full local build and test run, including the concurrency
+  stress and opacity tests, before being trusted.
+
 ## [3.0.0-preview.1]
 
 ### Changed (BREAKING)

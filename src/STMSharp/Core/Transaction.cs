@@ -1,208 +1,161 @@
-﻿// (c) 2024-2025 Francesco Del Re <francesco.delre.87@gmail.com>
+// (c) 2024-2025 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
+using STMSharp.Core.Exceptions;
 using STMSharp.Core.Interfaces;
 
 namespace STMSharp.Core
 {
     /// <summary>
-    /// Software Transactional Memory transaction with optimistic read snapshots
-    /// and a lock-free CAS-based commit protocol (reserve → revalidate → write&amp;release).
+    /// Software Transactional Memory transaction implementing a TL2-style protocol.
     ///
-    /// <para>
-    /// <b>Thread-safety:</b> a <see cref="Transaction{T}"/> instance is NOT thread-safe.
-    /// The transactional delegate passed to <c>STMEngine.Atomic</c> must execute the
-    /// <c>Read</c>/<c>Write</c> calls on a single logical flow. Sharing the same
-    /// <see cref="ITransaction{T}"/> across concurrent threads (e.g. via
-    /// <c>Task.WhenAll</c>) will corrupt the internal read/write/snapshot sets.
-    /// Concurrency is provided across distinct transactions, not within one.
-    /// </para>
+    /// On start the transaction samples a read version from the <see cref="GlobalVersionClock"/>.
+    /// Every read is validated against that version, so the transaction always observes a
+    /// consistent snapshot during execution (opacity); an inconsistent read aborts and retries.
+    /// On commit a read-write transaction locks its write set in a deterministic order, advances
+    /// the global clock to obtain a write version, revalidates its read set, then publishes the
+    /// buffered values and stamps the new version. Read-only transactions commit with no extra work.
+    ///
+    /// Thread-safety: an instance is not thread-safe; see <see cref="ITransaction"/>.
     /// </summary>
-    internal class Transaction<T>(bool isReadOnly = false) : ITransaction<T>
+    internal sealed class StmTransaction : ITransaction
     {
-        // Track variables by reference identity (avoid surprises with custom Equals/GetHashCode).
-        private readonly Dictionary<ISTMVariable<T>, T> _reads =
+        // Tracked by reference identity (independent of any custom Equals/GetHashCode).
+        private readonly Dictionary<IStmVariable, long> _reads =
             new(ReferenceEqualityComparer.Instance);
 
-        private readonly Dictionary<ISTMVariable<T>, T> _writes =
+        private readonly Dictionary<IStmVariable, object?> _writes =
             new(ReferenceEqualityComparer.Instance);
 
-        private readonly Dictionary<ISTMVariable<T>, long> _snapshotVersions =
-            new(ReferenceEqualityComparer.Instance);
+        private readonly bool _isReadOnly;
+        private readonly long _readVersion;
 
         private static int _conflictCount;
         private static int _retryCount;
         private static int _unresolvedConflictCount;
 
-        private readonly bool _isReadOnly = isReadOnly;
+        public StmTransaction(bool isReadOnly = false)
+        {
+            _isReadOnly = isReadOnly;
+            _readVersion = GlobalVersionClock.Read();
+        }
 
-        public static int ConflictCount => Volatile.Read(ref _conflictCount);
-        public static int RetryCount => Volatile.Read(ref _retryCount);
-        public static int UnresolvedConflictCount => Volatile.Read(ref _unresolvedConflictCount);
-
-        public T Read(ISTMVariable<T> variable)
+        public T Read<T>(STMVariable<T> variable)
         {
             ArgumentNullException.ThrowIfNull(variable);
 
+            // Read-your-own-writes.
             if (_writes.TryGetValue(variable, out var pending))
-                return pending;
+                return (T)pending!;
 
-            if (_reads.TryGetValue(variable, out var cached))
-                return cached;
+            if (!variable.TryReadForTransaction(_readVersion, out var value, out var word))
+                throw new TransactionRetryException();
 
-            var (value, version) = variable.ReadWithVersion();
-            _reads[variable] = value;
-
-            _snapshotVersions.TryAdd(variable, version);
-
+            _reads[variable] = word;
             return value;
         }
 
-        public void Write(ISTMVariable<T> variable, T value)
+        public void Write<T>(STMVariable<T> variable, T value)
         {
             ArgumentNullException.ThrowIfNull(variable);
 
             if (_isReadOnly)
                 throw new InvalidOperationException("Cannot Write in a read-only transaction.");
 
+            // Boxes value types; de-boxing is deferred to the performance pass.
             _writes[variable] = value;
-            _reads[variable] = value;
-
-            if (!_snapshotVersions.ContainsKey(variable))
-            {
-                var (_, version) = variable.ReadWithVersion();
-                _snapshotVersions[variable] = version;
-            }
         }
 
-        public bool CheckForConflicts()
+        /// <summary>
+        /// Attempts to commit. Returns false if the transaction must be retried.
+        /// </summary>
+        public bool Commit()
         {
-            foreach (var kvp in _snapshotVersions)
-            {
-                var variable = kvp.Key;
-                var snapshotVersion = kvp.Value;
+            // Read-only or no writes: every read was validated against the start version,
+            // so the observed snapshot is consistent and no commit-time work is required.
+            if (_isReadOnly || _writes.Count == 0)
+                return true;
 
-                if (variable.Version != snapshotVersion)
+            // Acquire write-set locks in a deterministic total order (by Id) to avoid deadlock.
+            var writeVars = new IStmVariable[_writes.Count];
+            _writes.Keys.CopyTo(writeVars, 0);
+            Array.Sort(writeVars, static (a, b) => a.Id.CompareTo(b.Id));
+
+            var acquired = new List<IStmVariable>(writeVars.Length);
+            long writeVersion = 0; // always overwritten by GlobalVersionClock.Next() before publish
+
+            try
+            {
+                foreach (var v in writeVars)
                 {
-                    Interlocked.Increment(ref _conflictCount);
-                    return true;
+                    if (!v.TryLock())
+                        return ReleaseAndFail(acquired);
+
+                    acquired.Add(v);
+                }
+
+                // Advance the clock to obtain this commit's write version.
+                writeVersion = GlobalVersionClock.Next();
+
+                // If no other commit happened between our start version and our write version,
+                // the read set cannot have changed, so its validation can be skipped.
+                if (writeVersion != _readVersion + 1)
+                {
+                    foreach (var kvp in _reads)
+                    {
+                        var v = kvp.Key;
+                        long word = v.VersionLockWord;
+
+                        if (_writes.ContainsKey(v))
+                        {
+                            // Locked by us: ensure it was not committed by another writer
+                            // between our read and our lock acquisition.
+                            if (VersionLock.VersionOf(word) > _readVersion)
+                                return ReleaseAndFail(acquired);
+                        }
+                        else
+                        {
+                            if (VersionLock.IsLocked(word) || VersionLock.VersionOf(word) > _readVersion)
+                                return ReleaseAndFail(acquired);
+                        }
+                    }
                 }
             }
+            catch
+            {
+                // Unexpected failure before publishing: we still hold every acquired lock.
+                for (int i = acquired.Count - 1; i >= 0; i--)
+                {
+                    try { acquired[i].Unlock(); } catch { /* best effort */ }
+                }
+                throw;
+            }
+
+            // Publish phase. From here we hold all locks and validation has passed.
+            // PublishBoxed and UnlockWithVersion perform only volatile writes and do not throw.
+            foreach (var v in writeVars)
+                v.PublishBoxed(_writes[v]);
+
+            foreach (var v in writeVars)
+                v.UnlockWithVersion(writeVersion);
+
+            return true;
+        }
+
+        private bool ReleaseAndFail(List<IStmVariable> acquired)
+        {
+            for (int i = acquired.Count - 1; i >= 0; i--)
+                acquired[i].Unlock();
 
             return false;
         }
 
-        public bool Commit()
-        {
-            if (_isReadOnly || _writes.Count == 0)
-            {
-                if (CheckForConflicts())
-                {
-                    Interlocked.Increment(ref _retryCount);
-                    Clear();
-                    return false;
-                }
+        public static int ConflictCount => Volatile.Read(ref _conflictCount);
+        public static int RetryCount => Volatile.Read(ref _retryCount);
+        public static int UnresolvedConflictCount => Volatile.Read(ref _unresolvedConflictCount);
 
-                Clear();
-                return true;
-            }
-
-            foreach (var w in _writes.Keys)
-            {
-                if (!_snapshotVersions.ContainsKey(w))
-                {
-                    Interlocked.Increment(ref _retryCount);
-                    Interlocked.Increment(ref _conflictCount);
-                    Clear();
-                    return false;
-                }
-            }
-
-            // Deterministic ordering: acquire reservations by per-variable unique Id (total order).
-            var writeKeys = new STMVariable<T>[_writes.Count];
-            int idx = 0;
-            foreach (var w in _writes.Keys)
-            {
-                // Defensive: should never happen because ISTMVariable<T> is internal
-                // and STMVariable<T> is the only implementation.
-                if (w is not STMVariable<T> stmVar)
-                {
-                    Interlocked.Increment(ref _retryCount);
-                    Interlocked.Increment(ref _conflictCount);
-                    Clear();
-                    return false;
-                }
-                writeKeys[idx++] = stmVar;
-            }
-
-            Array.Sort(writeKeys, (a, b) => a.Id.CompareTo(b.Id));
-
-            var acquired = new List<STMVariable<T>>(writeKeys.Length);
-
-            bool AbortWithRelease()
-            {
-                for (int i = acquired.Count - 1; i >= 0; i--)
-                    acquired[i].ReleaseAfterAbort();
-
-                Interlocked.Increment(ref _retryCount);
-                Interlocked.Increment(ref _conflictCount);
-                Clear();
-                return false;
-            }
-
-            try
-            {
-                foreach (var w in writeKeys)
-                {
-                    var snapVersion = _snapshotVersions[w];
-
-                    if (!w.TryAcquireForWrite(snapVersion))
-                        return AbortWithRelease();
-
-                    acquired.Add(w);
-                }
-
-                foreach (var kvp in _snapshotVersions)
-                {
-                    var variable = kvp.Key;
-                    var snapVersion = kvp.Value;
-
-                    if (_writes.ContainsKey(variable))
-                        continue;
-
-                    var curVersion = variable.Version;
-
-                    if (curVersion != snapVersion || (curVersion & 1L) != 0)
-                        return AbortWithRelease();
-                }
-
-                foreach (var w in writeKeys)
-                {
-                    w.WriteAndRelease(_writes[w]);
-                }
-
-                Clear();
-                return true;
-            }
-            catch
-            {
-                for (int i = acquired.Count - 1; i >= 0; i--)
-                {
-                    try { acquired[i].ReleaseAfterAbort(); } catch { }
-                }
-
-                Clear();
-                throw;
-            }
-        }
-
-        private void Clear()
-        {
-            _reads.Clear();
-            _writes.Clear();
-            _snapshotVersions.Clear();
-        }
-
-        public static void IncrementUnresolvedConflictCount() => Interlocked.Increment(ref _unresolvedConflictCount);
+        internal static void IncrementConflict() => Interlocked.Increment(ref _conflictCount);
+        internal static void IncrementRetry() => Interlocked.Increment(ref _retryCount);
+        internal static void IncrementUnresolvedConflictCount() => Interlocked.Increment(ref _unresolvedConflictCount);
 
         public static void ResetCounters()
         {
@@ -210,8 +163,15 @@ namespace STMSharp.Core
             Interlocked.Exchange(ref _retryCount, 0);
             Interlocked.Exchange(ref _unresolvedConflictCount, 0);
         }
+    }
 
-        T ITransaction<T>.Read(STMVariable<T> variable) => Read(variable);
-        void ITransaction<T>.Write(STMVariable<T> variable, T value) => Write(variable, value);
+    /// <summary>
+    /// Adapter exposing a <see cref="StmTransaction"/> through the legacy single-type
+    /// <see cref="ITransaction{T}"/> surface, for source compatibility.
+    /// </summary>
+    internal sealed class LegacyTransactionView<T>(StmTransaction transaction) : ITransaction<T>
+    {
+        public T Read(STMVariable<T> variable) => transaction.Read(variable);
+        public void Write(STMVariable<T> variable, T value) => transaction.Write(variable, value);
     }
 }

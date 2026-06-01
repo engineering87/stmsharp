@@ -1,4 +1,4 @@
-﻿// (c) 2024-2025 Francesco Del Re <francesco.delre.87@gmail.com>
+// (c) 2024-2025 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
 using System.Runtime.CompilerServices;
 using STMSharp.Core.Interfaces;
@@ -8,55 +8,56 @@ namespace STMSharp.Core
     /// <summary>
     /// A thread-safe STM variable that supports both reference and value types.
     ///
-    /// Semantics:
-    /// - Values are published atomically.
-    /// - A monotonic version tracks changes and coordinates writers via an even/odd protocol.
-    /// - Readers can obtain a consistent (Value, Version) snapshot using ReadWithVersion().
-    /// - Transactional commit uses internal CAS-based reservation helpers (no runtime locks).
-    ///
-    /// Version protocol (even/odd):
-    /// - Even version => variable is free (no writer reservation)
-    /// - Odd  version => variable is reserved by a writer (commit attempt or direct write)
+    /// Concurrency model (TL2-style):
+    /// - Each variable holds a value and a versioned write-lock word (see <see cref="VersionLock"/>):
+    ///   bit 0 is the lock flag and the remaining bits hold the version.
+    /// - The version is a stamp drawn from the <see cref="GlobalVersionClock"/> at commit time,
+    ///   so versions are comparable across all variables. This is what allows a transaction
+    ///   to validate a consistent snapshot during its whole execution (opacity).
+    /// - Transactional commits acquire the lock, stamp a new global version, and release it.
+    ///   Direct writes follow the same lock protocol so they interoperate safely.
     ///
     /// Notes on T:
-    /// - If T is a mutable reference type, external mutations that bypass Write(...) can break isolation
-    ///   because the version won't change. Prefer immutable types or treat T as a value.
+    /// - If T is a mutable reference type, external mutations that bypass Write(...) can break
+    ///   isolation because the version will not change. Prefer immutable types or treat T as a value.
+    ///
+    /// Note on the public Version:
+    /// - <see cref="Version"/> reports the commit version (a global stamp). It is monotonic but,
+    ///   unlike earlier releases, it is not constrained to be even: the lock flag is held in a
+    ///   separate bit and is not part of the reported version.
     /// </summary>
-    public sealed class STMVariable<T>(T initialValue) : ISTMVariable<T>
+    public sealed class STMVariable<T> : IStmVariable
     {
-        // Unique, monotonic id used for deterministic ordering of write-set acquisition.
-        // Static is per closed generic type STMVariable<T>, matching Transaction<T> usage.
+        // Process-unique, monotonic id for deterministic write-set lock ordering.
         private static long _idSeq;
-        internal long Id { get; } = Interlocked.Increment(ref _idSeq);
+        private readonly long _id = Interlocked.Increment(ref _idSeq);
 
-        // Boxed value to support both value types and reference types
-        private object _boxedValue = initialValue!;
+        // Boxed value to support both value types and reference types.
+        // (De-boxing for value types is deferred to the performance pass.)
+        private object? _boxedValue;
 
-        // Monotonic version; also used for reservation (even/odd scheme)
-        private long _version = 0;
+        // Versioned write-lock word: bit 0 = locked, remaining bits = version.
+        private long _versionLock; // starts at 0 => version 0, unlocked
 
-        /// <summary>
-        /// Reads the current value in a thread-safe manner.
-        /// </summary>
-        public T Read()
+        public STMVariable(T initialValue)
         {
-            var value = Volatile.Read(ref _boxedValue);
-            return (T)value!;
+            _boxedValue = initialValue;
         }
 
         /// <summary>
-        /// Writes a new value while preserving the internal even/odd version protocol:
-        /// - Even version  => free
-        /// - Odd version   => reserved by a writer
-        ///
-        /// This method performs a seqlock-style update:
-        /// 1) Wait until the variable is not reserved (version is even)
-        /// 2) Reserve the variable by CAS-ing version from even -> odd
-        /// 3) Publish the new value
-        /// 4) Release the reservation by incrementing version (odd -> even)
-        ///
-        /// This is a direct (non-transactional) write, but it is protocol-compatible and
-        /// will not leave the variable stuck in a reserved (odd) state.
+        /// Reads the latest published value in a thread-safe manner (no version check).
+        /// </summary>
+        public T Read() => (T)Volatile.Read(ref _boxedValue)!;
+
+        /// <summary>
+        /// Current commit version of the variable (monotonic global stamp).
+        /// </summary>
+        public long Version => VersionLock.VersionOf(Volatile.Read(ref _versionLock));
+
+        /// <summary>
+        /// Direct, non-transactional write that follows the same lock protocol as the
+        /// transactional commit, so it interoperates safely with concurrent transactions.
+        /// A write that does not change the value does not advance the version.
         /// </summary>
         public void Write(T value)
         {
@@ -64,53 +65,38 @@ namespace STMSharp.Core
 
             while (true)
             {
-                // Read current version (volatile via property).
-                // If odd, another writer currently holds a reservation.
-                long v = Version;
+                long word = Volatile.Read(ref _versionLock);
 
-                if ((v & 1L) != 0)
+                if (VersionLock.IsLocked(word))
                 {
                     spinner.SpinOnce();
                     continue;
                 }
 
-                // Reserve: even -> odd
-                if (Interlocked.CompareExchange(ref _version, v + 1, v) != v)
+                // Reserve: even (unlocked) -> odd (locked)
+                if (Interlocked.CompareExchange(ref _versionLock, word | 1L, word) != word)
                 {
                     spinner.SpinOnce();
                     continue;
                 }
 
-                // We now hold the reservation — no other writer can modify _boxedValue.
-                // Fast-path: avoid writing if the value would not change.
-                var currentValue = (T)Volatile.Read(ref _boxedValue)!;
-                if (EqualityComparer<T>.Default.Equals(currentValue, value))
+                // Lock held: no other writer can publish concurrently.
+                var current = (T)Volatile.Read(ref _boxedValue)!;
+                if (EqualityComparer<T>.Default.Equals(current, value))
                 {
-                    // Undo the reservation without advancing the version.
-                    Interlocked.Exchange(ref _version, v);
+                    // No change: release the lock without advancing the version.
+                    Volatile.Write(ref _versionLock, word);
                     return;
                 }
 
-                // Publish new value under our reservation.
-                Volatile.Write(ref _boxedValue, value!);
-
-                // Release: odd -> even
-                Interlocked.Increment(ref _version);
+                Volatile.Write(ref _boxedValue, value);
+                Volatile.Write(ref _versionLock, VersionLock.Stamp(GlobalVersionClock.Next()));
                 return;
             }
         }
 
         /// <summary>
-        /// Current version of the variable (monotonic).
-        /// </summary>
-        public long Version => Volatile.Read(ref _version);
-
-        /// <summary>
-        /// Manually advances the version without changing the stored value.
-        ///
-        /// IMPORTANT:
-        /// This method must NOT leave the version odd, because odd means "reserved".
-        /// Therefore, it advances the version by 2 (even -> even) using CAS.
+        /// Advances the version to a new global stamp without changing the stored value.
         /// </summary>
         public void IncrementVersion()
         {
@@ -118,26 +104,28 @@ namespace STMSharp.Core
 
             while (true)
             {
-                long v = Version;
+                long word = Volatile.Read(ref _versionLock);
 
-                // Do not interfere with a writer reservation.
-                if ((v & 1L) != 0)
+                if (VersionLock.IsLocked(word))
                 {
                     spinner.SpinOnce();
                     continue;
                 }
 
-                // Keep parity even: add 2 using CAS.
-                if (Interlocked.CompareExchange(ref _version, v + 2, v) == v)
-                    return;
+                if (Interlocked.CompareExchange(ref _versionLock, word | 1L, word) != word)
+                {
+                    spinner.SpinOnce();
+                    continue;
+                }
 
-                spinner.SpinOnce();
+                Volatile.Write(ref _versionLock, VersionLock.Stamp(GlobalVersionClock.Next()));
+                return;
             }
         }
 
         /// <summary>
-        /// Returns a consistent snapshot of the value and its version.
-        /// Ensures that the version did not change during the read.
+        /// Returns a consistent snapshot of the value and its commit version,
+        /// retrying while a writer holds the lock or the version changes mid-read.
         /// </summary>
         public (T Value, long Version) ReadWithVersion()
         {
@@ -145,66 +133,90 @@ namespace STMSharp.Core
 
             while (true)
             {
-                long v1 = Version;
+                long w1 = Volatile.Read(ref _versionLock);
 
-                // If version is odd, a writer has a reservation: retry.
-                if ((v1 & 1L) != 0)
+                if (VersionLock.IsLocked(w1))
                 {
                     spinner.SpinOnce();
                     continue;
                 }
 
-                T value = Read();
-                long v2 = Version;
+                var value = (T)Volatile.Read(ref _boxedValue)!;
+                long w2 = Volatile.Read(ref _versionLock);
 
-                // Valid snapshot: version unchanged (implies still even)
-                if (v1 == v2)
-                    return (value, v1);
+                if (w1 == w2)
+                    return (value, VersionLock.VersionOf(w1));
 
                 spinner.SpinOnce();
             }
         }
 
         // --------------------------------------------------------------------
-        // Internal helpers for lock-free transactional commit (CAS-based)
+        // Transactional read used by the engine (TL2 post-validated read).
         // --------------------------------------------------------------------
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal bool TryAcquireForWrite(long expectedSnapshotVersion)
+        /// <summary>
+        /// Reads the value with a version consistent with the given start version.
+        /// Returns false if the location is locked, changed during the read, or is
+        /// newer than the snapshot; the caller must then abort and retry.
+        /// </summary>
+        internal bool TryReadForTransaction(long readVersion, out T value, out long versionWord)
         {
-            if ((expectedSnapshotVersion & 1L) != 0) return false;
+            long w1 = Volatile.Read(ref _versionLock);
 
-            return Interlocked.CompareExchange(
-                ref _version,
-                expectedSnapshotVersion + 1,   // reserved (odd)
-                expectedSnapshotVersion        // expected (even)
-            ) == expectedSnapshotVersion;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal void WriteAndRelease(T value)
-        {
-            // MUST NOT THROW: this is called while holding the write-set reservation
-            // during the commit's publish phase. If this method threw between two
-            // variables, the write-set would be left in an inconsistent state
-            // (some variables published, others still reserved/unpublished).
-            // The operations below (Volatile.Write of a managed reference and
-            // Interlocked.Increment on a long field) cannot throw under normal
-            // managed execution.
-            Volatile.Write(ref _boxedValue, value!);
-            Interlocked.Increment(ref _version); // odd -> even
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal void ReleaseAfterAbort()
-        {
-            // Guard: only release if we actually hold the reservation (version is odd).
-            // Incrementing an already-even version would corrupt state (odd = reserved).
-            long v = Volatile.Read(ref _version);
-            if ((v & 1L) != 0)
+            if (VersionLock.IsLocked(w1))
             {
-                Interlocked.Increment(ref _version); // odd -> even
+                value = default!;
+                versionWord = w1;
+                return false;
             }
+
+            var observed = (T)Volatile.Read(ref _boxedValue)!;
+            long w2 = Volatile.Read(ref _versionLock);
+
+            if (w1 != w2 || VersionLock.VersionOf(w1) > readVersion)
+            {
+                value = default!;
+                versionWord = w1;
+                return false;
+            }
+
+            value = observed;
+            versionWord = w1;
+            return true;
         }
+
+        // --------------------------------------------------------------------
+        // IStmVariable: heterogeneous commit hooks used by the transaction engine.
+        // --------------------------------------------------------------------
+
+        long IStmVariable.Id => _id;
+
+        long IStmVariable.VersionLockWord => Volatile.Read(ref _versionLock);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        bool IStmVariable.TryLock()
+        {
+            long word = Volatile.Read(ref _versionLock);
+            if (VersionLock.IsLocked(word))
+                return false;
+
+            return Interlocked.CompareExchange(ref _versionLock, word | 1L, word) == word;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        void IStmVariable.UnlockWithVersion(long version)
+            => Volatile.Write(ref _versionLock, VersionLock.Stamp(version));
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        void IStmVariable.Unlock()
+        {
+            long word = Volatile.Read(ref _versionLock);
+            Volatile.Write(ref _versionLock, word & ~1L);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        void IStmVariable.PublishBoxed(object? boxedValue)
+            => Volatile.Write(ref _boxedValue, boxedValue);
     }
 }
