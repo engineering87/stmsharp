@@ -44,6 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tests for heterogeneous transactions spanning multiple element types and for
   the opacity guarantee (no observable torn cross-variable state, stable
   repeated reads within a transaction).
+- `TransactionalDictionary<TKey, TValue>`, a composable transactional dictionary
+  with fine-grained value concurrency: each present key owns its own value cell,
+  so transactions updating the values of different existing keys do not conflict.
+  Membership is governed by a single structural snapshot, which validates
+  observed presence or absence and prevents phantom reads. Insertion and removal
+  are structural and therefore coarse, by design; a per-key structural scheme is
+  intentionally deferred. Operations take an `ITransaction` and compose inside
+  `STMEngine.Atomic`.
 
 ### Performance
 
