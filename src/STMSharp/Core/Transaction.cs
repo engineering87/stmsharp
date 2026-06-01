@@ -80,17 +80,18 @@ namespace STMSharp.Core
             _writes.Keys.CopyTo(writeVars, 0);
             Array.Sort(writeVars, static (a, b) => a.Id.CompareTo(b.Id));
 
-            var acquired = new List<IStmVariable>(writeVars.Length);
+            // Number of write-set locks currently held (a prefix of the sorted writeVars).
+            int locked = 0;
             long writeVersion = 0; // always overwritten by GlobalVersionClock.Next() before publish
 
             try
             {
-                foreach (var v in writeVars)
+                for (int i = 0; i < writeVars.Length; i++)
                 {
-                    if (!v.TryLock())
-                        return ReleaseAndFail(acquired);
+                    if (!writeVars[i].TryLock())
+                        return ReleaseAndFail(writeVars, locked);
 
-                    acquired.Add(v);
+                    locked++;
                 }
 
                 // Advance the clock to obtain this commit's write version.
@@ -110,22 +111,22 @@ namespace STMSharp.Core
                             // Locked by us: ensure it was not committed by another writer
                             // between our read and our lock acquisition.
                             if (VersionLock.VersionOf(word) > _readVersion)
-                                return ReleaseAndFail(acquired);
+                                return ReleaseAndFail(writeVars, locked);
                         }
                         else
                         {
                             if (VersionLock.IsLocked(word) || VersionLock.VersionOf(word) > _readVersion)
-                                return ReleaseAndFail(acquired);
+                                return ReleaseAndFail(writeVars, locked);
                         }
                     }
                 }
             }
             catch
             {
-                // Unexpected failure before publishing: we still hold every acquired lock.
-                for (int i = acquired.Count - 1; i >= 0; i--)
+                // Unexpected failure before publishing: we still hold the first `locked` locks.
+                for (int i = locked - 1; i >= 0; i--)
                 {
-                    try { acquired[i].Unlock(); } catch { /* best effort */ }
+                    try { writeVars[i].Unlock(); } catch { /* best effort */ }
                 }
                 throw;
             }
@@ -141,10 +142,10 @@ namespace STMSharp.Core
             return true;
         }
 
-        private bool ReleaseAndFail(List<IStmVariable> acquired)
+        private static bool ReleaseAndFail(IStmVariable[] writeVars, int locked)
         {
-            for (int i = acquired.Count - 1; i >= 0; i--)
-                acquired[i].Unlock();
+            for (int i = locked - 1; i >= 0; i--)
+                writeVars[i].Unlock();
 
             return false;
         }

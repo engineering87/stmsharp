@@ -95,5 +95,36 @@ namespace STMSharp.PerformanceTests.Benchmarks
             readOnly: true,
             cancellationToken: CancellationToken.None);
         }
+
+        // ---- Non-generic API (no per-call LegacyTransactionView adapter allocation) ----
+
+        [Benchmark]
+        public async Task AtomicWriteNonGeneric()
+        {
+            await STMEngine.Atomic(tx =>
+            {
+                var value = tx.Read(_variable);
+                tx.Write(_variable, value + 1);
+            },
+            maxAttempts: MaxAttempts,
+            initialBackoffMilliseconds: InitialBackoffMilliseconds,
+            backoffType: Backoff,
+            readOnly: false,
+            cancellationToken: CancellationToken.None);
+        }
+
+        [Benchmark]
+        public async Task AtomicReadOnlyNonGeneric()
+        {
+            await STMEngine.Atomic(tx =>
+            {
+                var _ = tx.Read(_variable);
+            },
+            maxAttempts: MaxAttempts,
+            initialBackoffMilliseconds: InitialBackoffMilliseconds,
+            backoffType: Backoff,
+            readOnly: true,
+            cancellationToken: CancellationToken.None);
+        }
     }
 }

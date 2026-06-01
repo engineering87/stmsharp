@@ -45,6 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the opacity guarantee (no observable torn cross-variable state, stable
   repeated reads within a transaction).
 
+### Performance
+
+- Commit no longer allocates a list to track acquired write-set locks; it tracks
+  the number of held locks as an index into the sorted write-set instead. This
+  removes one allocation per committing read-write transaction.
+- Added non-generic API benchmarks alongside the legacy ones so the baseline can
+  separate the core cost from the per-call legacy adapter allocation.
+
 ### Notes
 
 - This is the most concurrency-sensitive change in the 3.0 line. It must be
