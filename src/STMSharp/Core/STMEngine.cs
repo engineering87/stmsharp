@@ -1,6 +1,7 @@
 // (c) 2024-2025 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
 using STMSharp.Core.Backoff;
+using STMSharp.Core.Exceptions;
 using STMSharp.Core.Interfaces;
 using STMSharp.Enum;
 
@@ -274,7 +275,8 @@ namespace STMSharp.Core
             }
 
             Transaction<T>.IncrementUnresolvedConflictCount();
-            throw new TimeoutException($"STM transaction failed after {maxAttempts} attempts");
+            throw new TransactionConflictException(
+                $"STM transaction failed to commit after {maxAttempts} attempt(s) due to repeated conflicts.");
         }
     }
 }

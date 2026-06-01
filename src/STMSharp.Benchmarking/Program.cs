@@ -2,6 +2,7 @@
 // This code is licensed under MIT license (see LICENSE.txt for details)
 using STMSharp.Benchmarking.Config;
 using STMSharp.Core;
+using STMSharp.Core.Exceptions;
 using System.Diagnostics;
 using System.Text.Json;
 
@@ -126,11 +127,11 @@ namespace STMSharp.Benchmarking
                 // Optional artificial processing delay between batches
                 await Task.Delay(Config.ProcessingTime);
             }
-            catch (TimeoutException ex)
+            catch (TransactionConflictException ex)
             {
-                // Log timeout and continue benchmark
+                // Log conflict exhaustion and continue benchmark
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"Warning: transaction timed out after max attempts: {ex.Message}");
+                Console.WriteLine($"Warning: transaction failed after max attempts: {ex.Message}");
                 Console.ResetColor();
             }
         }

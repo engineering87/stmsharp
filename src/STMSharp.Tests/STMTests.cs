@@ -1,6 +1,7 @@
 ﻿// (c) 2024-2025 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
 using STMSharp.Core;
+using STMSharp.Core.Exceptions;
 using STMSharp.Enum;
 
 namespace STMSharp.Tests
@@ -284,7 +285,7 @@ namespace STMSharp.Tests
 
                         return true; // success
                     }
-                    catch (TimeoutException)
+                    catch (TransactionConflictException)
                     {
                         return false; // expected for some contenders
                     }
@@ -393,7 +394,7 @@ namespace STMSharp.Tests
                         backoffType: BackoffType.ExponentialWithJitter,
                         cancellationToken: ct);
                     }
-                    catch (TimeoutException)
+                    catch (TransactionConflictException)
                     {
                         // Acceptable under contention with a small attempt budget
                     }

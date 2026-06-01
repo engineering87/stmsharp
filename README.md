@@ -15,7 +15,7 @@
 - **Conflict detection:** optimistic snapshot validation that preserves consistency.
 - **Configurable backoff strategies:** `Exponential`, `ExponentialWithJitter` (default), `Linear`, `Constant`.
 - **Read-only transactions:** validate snapshots without allowing writes, for safer read-heavy workloads.
-- **Diagnostics:** global conflict/retry counters per `Transaction<T>` via `StmDiagnostics`.
+- **Diagnostics:** global conflict/retry counters per `Transaction<T>` via `STMDiagnostics`.
 
 ## What is Software Transactional Memory (STM)?
 
@@ -81,7 +81,7 @@ This ensures serializability and prevents lost updates without runtime locks.
    - `BackoffType`
    - `TransactionMode` (`ReadWrite`, `ReadOnly`)
 
-5. **`StmDiagnostics`**  
+5. **`STMDiagnostics`**  
    Public diagnostics helper:
    - `GetConflictCount<T>()`
    - `GetRetryCount<T>()`
@@ -173,11 +173,11 @@ await STMEngine.Atomic<int>(async tx =>
 
 ```csharp
 // Reset counters for int-transactions
-StmDiagnostics.Reset<int>();
+STMDiagnostics.Reset<int>();
 
 // Run some atomic operations...
-var conflicts = StmDiagnostics.GetConflictCount<int>();
-var retries   = StmDiagnostics.GetRetryCount<int>();
+var conflicts = STMDiagnostics.GetConflictCount<int>();
+var retries   = STMDiagnostics.GetRetryCount<int>();
 
 Console.WriteLine($"Conflicts: {conflicts}, Retries: {retries}");
 ```

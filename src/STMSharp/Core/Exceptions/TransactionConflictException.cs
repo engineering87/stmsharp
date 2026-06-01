@@ -3,7 +3,9 @@
 namespace STMSharp.Core.Exceptions
 {
     /// <summary>
-    /// Exception thrown when a transaction commit fails due to a conflict.
+    /// Exception thrown when a transaction cannot be committed, typically because
+    /// the configured retry budget (MaxAttempts) has been exhausted due to repeated
+    /// optimistic-commit conflicts under contention.
     /// </summary>
     public class TransactionConflictException : Exception
     {
