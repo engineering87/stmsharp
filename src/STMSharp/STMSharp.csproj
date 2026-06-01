@@ -1,18 +1,35 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <!-- Multi-targeting: LTS (net8.0) + current (net10.0). -->
+    <!-- netstandard2.0 / .NET Framework reach is added in a follow-up increment
+         together with the required polyfill layer. -->
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!-- Package metadata -->
     <Title>STMSharp</Title>
-    <Description>STMSharp is a .NET library for lock-free synchronization using Software Transactional Memory (STM), enabling atomic transactions and efficient multi-threading</Description>
-    <PackageProjectUrl>https://github.com/engineering87/stmsharp</PackageProjectUrl>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <RepositoryUrl>https://github.com/engineering87/stmsharp</RepositoryUrl>
+    <Description>STMSharp is a .NET library for lock-free synchronization using Software Transactional Memory (STM), enabling atomic transactions over shared variables with optimistic snapshots and a CAS-based commit.</Description>
     <Authors>Francesco Del Re</Authors>
+    <PackageTags>stm;software-transactional-memory;concurrency;lock-free;cas;atomic;transactions;multithreading</PackageTags>
+    <PackageProjectUrl>https://github.com/engineering87/stmsharp</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/engineering87/stmsharp</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
-    <Version>2.0.1</Version>
+    <Version>3.0.0-preview.1</Version>
+
+    <!-- Build trust and debuggability -->
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
 
   <ItemGroup>
@@ -24,6 +41,10 @@
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>
     </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
   </ItemGroup>
 
 </Project>
