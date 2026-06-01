@@ -2,8 +2,6 @@
 // This code is licensed under MIT license (see LICENSE.txt for details)
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Configs;
-using BenchmarkDotNet.Jobs;
-using BenchmarkDotNet.Order;
 using STMSharp.Core;
 using STMSharp.Core.Collections;
 using STMSharp.Enum;
@@ -35,12 +33,7 @@ namespace STMSharp.PerformanceTests.Benchmarks
     /// The counts are deliberately tier-grouped rather than fitted per method, since OperationsPerInvoke
     /// only changes how long an iteration runs, not the per-operation Mean it reports.
     /// </summary>
-    [Config(typeof(BenchmarkConfig))] // default BDN behavior minus the MinIterationTime warning
-    [MemoryDiagnoser]
-    [RankColumn]
-    [Orderer(SummaryOrderPolicy.FastestToSlowest)]
-    [HideColumns("StdDev")] // modern BDN: hide by column name
-    [SimpleJob(RuntimeMoniker.Net10_0, launchCount: 1, warmupCount: 3, iterationCount: 10)]
+    [Config(typeof(BenchmarkConfig))] // single authoritative config (job, diagnoser, ordering, columns, minus the MinIterationTime analyser)
     public class STMPerformanceBenchmark
     {
         // ---------------- OperationsPerInvoke tiers ----------------
