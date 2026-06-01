@@ -39,6 +39,12 @@ namespace STMSharp.Core
         private const int DefaultMaxBackoffMilliseconds = 2000;
         private const BackoffType DefaultBackoffType = BackoffType.ExponentialWithJitter;
 
+        // Initial retries are absorbed by a CPU-level spin rather than a timed delay.
+        // STM conflicts usually clear within microseconds, so the first retries must not
+        // pay the operating-system timer quantum that Task.Delay incurs (about 15 ms on
+        // Windows for any sub-quantum value). Only sustained contention reaches the timed ladder.
+        private const int SpinRetries = 4;
+
         // =====================================================================
         // Non-generic API (preferred): one transaction, heterogeneous variables.
         // =====================================================================
@@ -321,14 +327,39 @@ namespace STMSharp.Core
                 if (attempt >= maxAttempts)
                     break;
 
-                int delay = BackoffPolicy.GetDelayMilliseconds(strategy, attempt, baseMs, maxMs);
-                if (delay > 0)
-                    await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                await BackoffAsync(strategy, attempt, baseMs, maxMs, cancellationToken).ConfigureAwait(false);
             }
 
             StmTransaction.IncrementUnresolvedConflictCount();
             throw new TransactionConflictException(
                 $"STM transaction failed to commit after {maxAttempts} attempt(s) due to repeated conflicts.");
+        }
+
+        // Two-phase backoff. The first SpinRetries attempts back off with a bounded CPU spin
+        // and a single cooperative yield, both on the microsecond scale and free of any timer.
+        // Only beyond that does the configured timed ladder apply, so genuine sustained
+        // contention still yields the thread and backs off in real time.
+        private static Task BackoffAsync(
+            BackoffType strategy, int attempt, int baseMs, int maxMs, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (attempt <= SpinRetries)
+            {
+                // Bounded busy-spin that grows with the attempt but stays well under one
+                // millisecond (about 128 to 1024 iterations), followed by one yield so a
+                // competing transaction can win the contended slot.
+                Thread.SpinWait(64 << attempt);
+                Thread.Yield();
+                return Task.CompletedTask;
+            }
+
+            // Sustained contention: timed ladder, offset so it restarts from its base
+            // once the spin phase is over.
+            int delay = BackoffPolicy.GetDelayMilliseconds(strategy, attempt - SpinRetries, baseMs, maxMs);
+            return delay > 0
+                ? Task.Delay(delay, cancellationToken)
+                : Task.CompletedTask;
         }
 
         private static void ValidateBudget(int maxAttempts, int initialBackoffMilliseconds, int maxBackoffMilliseconds)
