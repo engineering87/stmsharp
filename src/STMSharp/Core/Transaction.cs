@@ -40,6 +40,15 @@ namespace STMSharp.Core
         private object?[]? _writeVals;
         private int _writeCount;
 
+        // Commute set: variables with a pending commutative operation applied to the live
+        // committed value at commit time, under lock. The operation is erased to
+        // Func<object?, object?> so heterogeneous element types share one buffer. A variable
+        // present here is NOT validated as a read, which is what lets commuting updates avoid
+        // conflicting with one another.
+        private IStmVariable[]? _commuteVars;
+        private Func<object?, object?>[]? _commuteOps;
+        private int _commuteCount;
+
         private readonly bool _isReadOnly;
         private readonly long _readVersion;
 
@@ -56,6 +65,10 @@ namespace STMSharp.Core
         public T Read<T>(STMVariable<T> variable)
         {
             ArgumentNullException.ThrowIfNull(variable);
+
+            // If this variable has a pending commute, materialize it into the write set first,
+            // so the commute set and write set stay disjoint and the read observes the effect.
+            MaterializeCommuteIfPending(variable);
 
             // Read-your-own-writes: return the pending value if already written in this transaction.
             for (int i = 0; i < _writeCount; i++)
@@ -77,6 +90,10 @@ namespace STMSharp.Core
 
             if (_isReadOnly)
                 throw new InvalidOperationException("Cannot Write in a read-only transaction.");
+
+            // A pending commute on this variable is superseded by an explicit write; drop it so
+            // the commute set and write set remain disjoint. The write below records the value.
+            DropPendingCommute(variable);
 
             // Boxes value types; de-boxing the write set is a separate, later step.
             for (int i = 0; i < _writeCount; i++)
@@ -157,29 +174,150 @@ namespace STMSharp.Core
             _writeCount = count;
         }
 
+        public void Commute<T>(STMVariable<T> variable, Func<T, T> operation)
+        {
+            ArgumentNullException.ThrowIfNull(variable);
+            ArgumentNullException.ThrowIfNull(operation);
+
+            if (_isReadOnly)
+                throw new InvalidOperationException("Cannot Commute in a read-only transaction.");
+
+            // Conservative fallback: if the variable is already read or written
+            // non-commutatively in this transaction, the commutative relaxation is unsafe
+            // (the transaction has observed or fixed a concrete value), so apply the operation
+            // eagerly through the normal write path, which is validated and published as usual.
+            if (IsInWriteSet(variable) || IsInReadSet(variable))
+            {
+                Write(variable, operation(Read(variable)));
+                return;
+            }
+
+            // If this variable already has a pending commute, compose the operations so the
+            // buffer holds a single function. Composition order does not matter for genuinely
+            // commutative operations, which is the precondition the caller must satisfy.
+            for (int i = 0; i < _commuteCount; i++)
+            {
+                if (ReferenceEquals(_commuteVars![i], variable))
+                {
+                    var existing = _commuteOps![i];
+                    _commuteOps![i] = boxed => operation((T)existing(boxed)!);
+                    return;
+                }
+            }
+
+            if (_commuteVars is null)
+            {
+                _commuteVars = new IStmVariable[InitialCapacity];
+                _commuteOps = new Func<object?, object?>[InitialCapacity];
+            }
+            else if (_commuteCount == _commuteVars.Length)
+            {
+                int n = _commuteVars.Length * 2;
+                Array.Resize(ref _commuteVars, n);
+                Array.Resize(ref _commuteOps, n);
+            }
+
+            // Erase the typed operation to operate on the boxed value.
+            _commuteVars![_commuteCount] = variable;
+            _commuteOps![_commuteCount] = boxed => operation((T)boxed!);
+            _commuteCount++;
+        }
+
+        private bool IsInReadSet(IStmVariable v)
+        {
+            for (int i = 0; i < _readCount; i++)
+            {
+                if (ReferenceEquals(_readVars![i], v))
+                    return true;
+            }
+            return false;
+        }
+
+        // If the variable has a pending commute, apply it eagerly to the value read now and
+        // record the result as a normal write, then remove the commute entry. This keeps the
+        // commute set disjoint from the write set and moves the variable onto the validated path.
+        private void MaterializeCommuteIfPending<T>(STMVariable<T> variable)
+        {
+            for (int i = 0; i < _commuteCount; i++)
+            {
+                if (ReferenceEquals(_commuteVars![i], variable))
+                {
+                    var op = _commuteOps![i];
+                    RemoveCommuteAt(i);
+                    // Read the committed value via the normal transactional read (adds it to the
+                    // read set and validates the snapshot), then buffer the applied result.
+                    Write(variable, (T)op(variable.Read())!);
+                    return;
+                }
+            }
+        }
+
+        private void DropPendingCommute(IStmVariable variable)
+        {
+            for (int i = 0; i < _commuteCount; i++)
+            {
+                if (ReferenceEquals(_commuteVars![i], variable))
+                {
+                    RemoveCommuteAt(i);
+                    return;
+                }
+            }
+        }
+
+        private void RemoveCommuteAt(int index)
+        {
+            // Compact by moving the last entry into the removed slot (order does not matter).
+            int last = _commuteCount - 1;
+            _commuteVars![index] = _commuteVars![last];
+            _commuteOps![index] = _commuteOps![last];
+            _commuteVars![last] = null!;
+            _commuteOps![last] = null!;
+            _commuteCount = last;
+        }
+
         /// <summary>
         /// Attempts to commit. Returns false if the transaction must be retried.
         /// </summary>
         public bool Commit()
         {
-            // Read-only or no writes: every read was validated against the start version,
-            // so the observed snapshot is consistent and no commit-time work is required.
-            if (_isReadOnly || _writeCount == 0)
+            // Read-only: no writes and no commutes are possible, snapshot already validated.
+            if (_isReadOnly)
                 return true;
 
-            // Acquire write-set locks in a deterministic total order (by Id) to avoid deadlock.
-            Array.Sort(_writeVars!, _writeVals!, 0, _writeCount, IdComparer);
+            // No writes and no commutes: every read was validated against the start version,
+            // so the observed snapshot is consistent and no commit-time work is required.
+            if (_writeCount == 0 && _commuteCount == 0)
+                return true;
 
-            // Number of write-set locks currently held (a prefix of the sorted write set).
+            // Build a single, Id-sorted lock plan over the union of the write set and the
+            // commute set. Locking everything in one deterministic total order preserves
+            // deadlock freedom exactly as for write-only commits. The two sets are disjoint:
+            // Commute(...) routes any variable already written to the normal write path.
+            int lockTargetCount = _writeCount + _commuteCount;
+            var lockTargets = new IStmVariable[lockTargetCount];
+            for (int i = 0; i < _writeCount; i++)
+                lockTargets[i] = _writeVars![i];
+            for (int i = 0; i < _commuteCount; i++)
+                lockTargets[_writeCount + i] = _commuteVars![i];
+            Array.Sort(lockTargets, 0, lockTargetCount, IdComparer);
+
             int locked = 0;
             long writeVersion = 0; // always overwritten by GlobalVersionClock.Next() before publish
 
             try
             {
-                for (int i = 0; i < _writeCount; i++)
+                for (int i = 0; i < lockTargetCount; i++)
                 {
-                    if (!_writeVars![i].TryLock())
-                        return ReleaseAndFail(locked);
+                    // Acquire each lock in the deterministic Id order, waiting rather than
+                    // aborting on contention. The total Id order makes waiting deadlock-free:
+                    // two committers cannot hold-and-wait in a cycle, and the committer holding
+                    // the lowest-Id locks is never blocked, so global progress is guaranteed.
+                    // This removes the spurious aborts that pure physical lock contention used
+                    // to cause, which is what let a commute-only transaction (no read set to
+                    // validate, so no real conflict) exhaust its retry budget under many threads.
+                    var spinner = new SpinWait();
+                    while (!lockTargets[i].TryLock())
+                        spinner.SpinOnce();
 
                     locked++;
                 }
@@ -187,9 +325,14 @@ namespace STMSharp.Core
                 // Advance the clock to obtain this commit's write version.
                 writeVersion = GlobalVersionClock.Next();
 
-                // If no other commit happened between our start version and our write version,
-                // the read set cannot have changed, so its validation can be skipped.
-                if (writeVersion != _readVersion + 1)
+                // Validate the read set. Commute-only variables are deliberately NOT in the
+                // read set, so they are not validated here: that is what lets commuting
+                // updates avoid conflicting with one another. A variable that was read
+                // non-commutatively is validated as usual, which preserves serializability.
+                // The read-set skip optimization is unsafe once commutes are present, because
+                // a commute advances a variable's version without that variable being a
+                // read-set entry, so we cannot infer "no intervening commit" from the clock.
+                if (writeVersion != _readVersion + 1 || _commuteCount > 0)
                 {
                     for (int i = 0; i < _readCount; i++)
                     {
@@ -198,41 +341,47 @@ namespace STMSharp.Core
 
                         if (IsInWriteSet(v))
                         {
-                            // Locked by us: ensure it was not committed by another writer
-                            // between our read and our lock acquisition.
                             if (VersionLock.VersionOf(word) > _readVersion)
-                                return ReleaseAndFail(locked);
+                                return ReleaseTargetsAndFail(lockTargets, locked);
                         }
                         else
                         {
                             if (VersionLock.IsLocked(word) || VersionLock.VersionOf(word) > _readVersion)
-                                return ReleaseAndFail(locked);
+                                return ReleaseTargetsAndFail(lockTargets, locked);
                         }
                     }
                 }
             }
             catch
             {
-                // Unexpected failure before publishing: we still hold the first `locked` locks.
                 for (int i = locked - 1; i >= 0; i--)
                 {
-                    try { _writeVars![i].Unlock(); } catch { /* best effort */ }
+                    try { lockTargets[i].Unlock(); } catch { /* best effort */ }
                 }
                 throw;
             }
 
-            // Publish phase. From here we hold all locks and validation has passed.
-            // PublishBoxed and UnlockWithVersion perform only volatile writes and do not throw.
+            // Publish phase. We hold every lock and validation has passed.
+            // Plain writes publish their buffered value.
             for (int i = 0; i < _writeCount; i++)
                 _writeVars![i].PublishBoxed(_writeVals![i]);
 
-            for (int i = 0; i < _writeCount; i++)
-                _writeVars![i].UnlockWithVersion(writeVersion);
+            // Commutes read the live committed value under lock and apply their operation,
+            // so two commuting updates compose correctly regardless of commit order.
+            for (int i = 0; i < _commuteCount; i++)
+            {
+                var current = _commuteVars![i].ReadBoxed();
+                _commuteVars![i].PublishBoxed(_commuteOps![i](current));
+            }
 
-            // All locks released: now it is safe to wake any transactions blocked (via Retry)
-            // on the variables this transaction changed. Done last so no STM lock is held.
-            for (int i = 0; i < _writeCount; i++)
-                _writeVars![i].SignalCommitted();
+            // Stamp the new version on every locked variable and release.
+            for (int i = 0; i < lockTargetCount; i++)
+                lockTargets[i].UnlockWithVersion(writeVersion);
+
+            // All locks released: wake any transactions blocked (via Retry) on the variables
+            // this transaction changed. Done last so no STM lock is held.
+            for (int i = 0; i < lockTargetCount; i++)
+                lockTargets[i].SignalCommitted();
 
             return true;
         }
@@ -247,10 +396,10 @@ namespace STMSharp.Core
             return false;
         }
 
-        private bool ReleaseAndFail(int locked)
+        private static bool ReleaseTargetsAndFail(IStmVariable[] lockTargets, int locked)
         {
             for (int i = locked - 1; i >= 0; i--)
-                _writeVars![i].Unlock();
+                lockTargets[i].Unlock();
 
             return false;
         }

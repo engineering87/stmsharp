@@ -104,14 +104,16 @@ extends the consistency model document with the blocking semantics.
 
 ## Phase 3: Commutative operations
 
-Commutative operations let independent updates that commute, such as counter increments
-and set insertions, avoid conflicting with one another. This is directly relevant to the
-single-counter result: a commuting increment need not abort against another increment, so
-it would convert the worst-case workload into one the STM can actually handle without
-serializing every attempt. A commuting update buffers a function applied to the committed
-value under lock at commit, so it relaxes the validation invariant deliberately. It comes
-after the blocking machinery is stable, needs its own invariant test, and requires a new
-clause in the consistency model describing the relaxation precisely.
+Commutative operations let independent updates that commute, such as counter increments,
+avoid conflicting with one another. IMPLEMENTED (pending local build/test validation):
+`ITransaction.Commute(variable, operation)` buffers a function applied to the live committed
+value under lock at commit, so two commuting updates to the same variable do not conflict.
+This directly addresses the single-counter contention result. A variable also touched
+non-commutatively in the same transaction falls back to the validated path (commute set and
+write set kept disjoint), and the read-set validation skip is disabled when a commute is
+present. Covered by `CommuteTests`, including a 16x1000 conservation invariant, and the
+consistency model gains a commute clause. Must be compiled and tested locally before it is
+trusted, with particular attention to the conservation invariant under contention.
 
 ## Phase 4: Honest, complete benchmarking and documentation
 

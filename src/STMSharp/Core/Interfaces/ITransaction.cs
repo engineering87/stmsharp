@@ -52,6 +52,25 @@ namespace STMSharp.Core.Interfaces
         /// alternative is not caught here and aborts or propagates as usual.
         /// </summary>
         void OrElse(Action<ITransaction> first, Action<ITransaction> second);
+
+        /// <summary>
+        /// Buffers a commutative update: at commit time, under the variable's lock, the
+        /// committed value is read and <paramref name="operation"/> is applied to it, and the
+        /// result is published. Because the operation is applied to the live committed value
+        /// rather than to a value observed during the transaction, two commutative updates to
+        /// the same variable do not conflict with each other, which removes the needless aborts
+        /// that a contended counter would otherwise suffer.
+        ///
+        /// The operation must be genuinely commutative and associative with respect to other
+        /// commutative updates on the same variable (for example integer addition), and must be
+        /// free of side effects, since it runs at commit time and may be composed with other
+        /// commutative updates in any order.
+        ///
+        /// If the same variable is also read or written non-commutatively in the same
+        /// transaction, the commutative relaxation does not apply and the variable is validated
+        /// and published on the conservative path, preserving serializability.
+        /// </summary>
+        void Commute<T>(STMVariable<T> variable, Func<T, T> operation);
     }
 
     /// <summary>

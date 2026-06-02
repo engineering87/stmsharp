@@ -63,10 +63,13 @@ returns the pending written value, not the last committed value.
 
 ### G5. Deadlock freedom of commit
 
-The commit protocol acquires write-set locks in a deterministic total order by a stable
-per-variable identifier, and on failure releases exactly the locks it has acquired, in
-reverse. Two committing transactions therefore cannot hold-and-wait in a cycle. Progress
-under contention is governed by the retry budget and backoff, not by lock ordering.
+The commit protocol acquires the locks of the write set and the commute set in a
+deterministic total order by a stable per-variable identifier. Because the order is total,
+a committer waits for a contended lock rather than aborting, and two committing transactions
+cannot hold-and-wait in a cycle: the committer holding the lowest-identifier locks is never
+blocked, so global progress is guaranteed. On a validation failure the transaction releases
+exactly the locks it holds and retries. Physical lock contention therefore does not cause
+spurious aborts; only a genuine read-set conflict does.
 
 ## Isolation level
 
@@ -134,6 +137,34 @@ The global version clock is a 64-bit counter advanced once per committing read-w
 transaction. Exhausting its range would require on the order of 10^18 commits and is not
 a practical concern; it is noted here only for completeness.
 
+## Commutative updates
+
+`ITransaction.Commute(variable, operation)` buffers an operation that is applied to the
+variable's live committed value at commit time, under the variable's lock, rather than to
+a value observed during the transaction. This deliberately relaxes read-set validation for
+that variable, so two transactions that only commute the same variable do not conflict.
+
+The relaxation is sound under these conditions, which the implementation enforces or the
+caller must satisfy:
+
+- A commuting variable is not entered into the read set, so it is not validated as a read.
+  Its commit-time application reads the current committed value under lock, applies the
+  operation, publishes the result, and stamps a new version, so transactions that did read
+  that variable are still correctly invalidated.
+- If the same variable is read or written non-commutatively in the same transaction, the
+  commutative relaxation does not apply: the pending operation is materialized onto the
+  validated write path, and the variable is validated and published conservatively. The
+  commute set and the write set are therefore always disjoint at commit.
+- The operation must be genuinely commutative and associative with respect to other
+  commutative operations on the same variable (for example integer addition), and free of
+  side effects, because it runs at commit and may be composed with other commuting updates
+  in any order. Operations that are not commutative break serializability; that obligation
+  rests with the caller.
+
+When a transaction contains any commute, the read-set validation skip optimization is
+disabled, because a commute advances a variable's version without that variable being a
+read-set entry, so the clock alone can no longer prove that no intervening commit occurred.
+
 ## What is not guaranteed
 
 - No guarantee extends to state outside STM variables. STMSharp does not make arbitrary
@@ -141,8 +172,10 @@ a practical concern; it is noted here only for completeness.
 - No nesting semantics beyond flat composition within a single `Atomic` call are
   specified. A transaction is not currently composed of independently aborting
   sub-transactions.
-- No blocking composition operators (`retry` / `orElse`) are specified at this revision.
-  They are planned and will extend this document when introduced.
+- Blocking composition operators `retry` and `orElse` are provided. `retry` blocks the
+  transaction on its read set until a committed change wakes it; `orElse` runs a second
+  alternative if the first blocks, and blocks on the union of read sets if both block.
+  These do not weaken G1 to G5; a blocked transaction has not committed.
 - No fairness guarantee is made among contending transactions. Under sustained contention
   some transactions may exhaust their retry budget while others commit.
 

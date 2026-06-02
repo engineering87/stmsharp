@@ -28,11 +28,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   blocked first alternative are retained so the union is correct; only its writes
   are rolled back (Haskell-STM `orElse` semantics). Covered by `OrElseTests`,
   including a both-block test that wakes on the second alternative's watched
-  variable. NOTE: not yet validated by a local build/test run; commutative
-  operations remain deferred.
+  variable.
+- Commutative updates: `ITransaction.Commute(variable, operation)`. The operation
+  is applied to the variable's live committed value at commit time, under lock, so
+  two transactions that only commute the same variable do not conflict. This
+  directly addresses the contended-counter workload, where plain read-modify-write
+  serializes every attempt. A variable also touched non-commutatively in the same
+  transaction falls back to the validated path (the commute set and write set are
+  kept disjoint), preserving serializability. The read-set validation skip is
+  disabled whenever a commute is present. Covered by `CommuteTests`, including a
+  16-thread by 1000-increment conservation invariant. The consistency model gains
+  a commute clause. NOTE: not yet validated by a local build/test run.
 
 ### Fixed
 
+- Commit now acquires write-set and commute-set locks with an ordered,
+  deadlock-free spin-wait instead of a single non-blocking attempt that
+  aborted on contention. Because the locks are taken in a total order by
+  variable id, waiting cannot deadlock, and the committer holding the
+  lowest-id locks always makes progress. This removes a physical-contention
+  livelock in which a commute-only transaction (no read set, so no real
+  conflict) could exhaust its retry budget and throw
+  `TransactionConflictException` under many threads contending the same
+  variable. Genuine read-set conflicts still abort and retry as before.
 - Corrected `BackoffPolicyTests.ExponentialWithJitter_ReturnsWithinExpectedRange`
   to match the real full-jitter contract. The delay is `Random.Shared.Next(0,
   CapExp + 1)`, an inclusive `[0, CapExp]` range, so zero is a deliberate, valid

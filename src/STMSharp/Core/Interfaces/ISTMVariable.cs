@@ -43,6 +43,12 @@ namespace STMSharp.Core.Interfaces
         void Unlock();
 
         /// <summary>
+        /// Reads the current boxed value. Used by the committer under the variable's lock to
+        /// apply a commutative update to the live committed value.
+        /// </summary>
+        object? ReadBoxed();
+
+        /// <summary>
         /// Publishes the pending (boxed) value while the variable is locked by the committer.
         /// </summary>
         void PublishBoxed(object? boxedValue);

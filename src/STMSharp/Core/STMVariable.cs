@@ -227,6 +227,9 @@ namespace STMSharp.Core
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        object? IStmVariable.ReadBoxed()
+            => Volatile.Read(ref _boxedValue);
+
         void IStmVariable.PublishBoxed(object? boxedValue)
             => Volatile.Write(ref _boxedValue, boxedValue);
 
