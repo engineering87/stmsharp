@@ -1,0 +1,16 @@
+sequenceDiagram
+    participant T as Transaction
+    participant V as STMVariable write set
+    participant C as GlobalVersionClock
+    Note over T: Read set already validated<br/>against start version
+    T->>V: 1. Lock write set in total Id order (CAS per variable)
+    T->>C: 2. Advance clock once to obtain write version
+    T->>V: 3. Revalidate read set against live version-lock word
+    alt a read variable is locked or its version is newer
+        T->>V: Release held locks
+        Note over T: Abort and retry
+    else read set still consistent
+        T->>V: 4. Publish buffered values
+        T->>V: Release each lock, stamping the new version
+        Note over T: Commit succeeds
+    end

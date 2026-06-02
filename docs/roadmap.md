@@ -88,6 +88,19 @@ now the single most valuable remaining piece of technical work.
   cost to boxing, to the transaction lifecycle, or to neither. This run decides which
   allocation source to attack; no pooling/de-boxing change will be made before it,
   to avoid optimizing blind (two prior performance predictions about commute were wrong).
+- Allocation reduction: TRIED AND REVERTED. The profile run attributed an int
+  read-modify-write's 536 B as ~368 B transaction object + read set, ~144 B write
+  buffers + lock plan, and only ~24 B value boxing, so de-boxing was dropped (smallest
+  slice, highest risk). Transaction-instance reuse across retries (Reset() re-sampling
+  the start version and clearing the sets) was implemented and measured, but the
+  contended-counter run did not improve and arguably regressed on both time and
+  allocation (the conflict/attempt count varies run to run, which confounds the
+  comparison, and Reset adds per-attempt work). Given the change touches snapshot
+  semantics (mutable read version) on the core path without a demonstrated benefit, it
+  was reverted. The allocation profiler (`AllocationProfileBenchmark`) is kept. If
+  allocation is revisited, first build a fixed-retry-count micro-benchmark so the
+  effect of a change is isolated from the noisy contention retry count, then decide.
+  Net conclusion for now: the per-transaction allocation profile is left as is.
 
 Each change is measured with the comparative benchmark, before and after, on the same
 machine.
