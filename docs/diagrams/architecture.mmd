@@ -1,0 +1,25 @@
+flowchart TB
+    subgraph Public["Public surface"]
+        E[STMEngine<br/>Atomic / TryAtomic]
+        O[StmOptions]
+        D[STMDiagnostics]
+    end
+    subgraph Context["Transactional context"]
+        I[ITransaction<br/>non-generic, per-call generic Read/Write]
+        L[ITransaction&lt;T&gt; legacy<br/>via adapter]
+    end
+    subgraph Core["Core protocol"]
+        S[StmTransaction<br/>read / write / commute buffers]
+        VAR[STMVariable&lt;T&gt;<br/>value + 64-bit version-lock word]
+        CLK[GlobalVersionClock]
+    end
+    DICT[TransactionalDictionary&lt;TKey,TValue&gt;]
+    E --> I
+    L -.adapts to.-> I
+    E --> O
+    I --> S
+    S --> VAR
+    S --> CLK
+    VAR --> CLK
+    DICT --> VAR
+    E --> D

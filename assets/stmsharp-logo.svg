@@ -1,0 +1,25 @@
+<svg width="560" height="160" viewBox="0 0 560 160" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="STMSharp">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2D6CDF"/>
+      <stop offset="1" stop-color="#1B3A8F"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Mark: three concentric transaction rings around an atomic core,
+       evoking versioned snapshots committing atomically. -->
+  <g transform="translate(80,80)">
+    <circle r="58" fill="none" stroke="url(#g)" stroke-width="3" opacity="0.30"/>
+    <circle r="44" fill="none" stroke="url(#g)" stroke-width="3" opacity="0.55"/>
+    <circle r="30" fill="none" stroke="url(#g)" stroke-width="3" opacity="0.85"/>
+    <circle r="13" fill="url(#g)"/>
+    <!-- commit tick at top of the outer ring -->
+    <circle cx="0" cy="-58" r="5.5" fill="#2D6CDF"/>
+  </g>
+
+  <!-- Wordmark -->
+  <g transform="translate(168,0)" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif">
+    <text x="0" y="78" font-size="46" font-weight="700" fill="#1B3A8F">STM<tspan fill="#2D6CDF">Sharp</tspan></text>
+    <text x="2" y="108" font-size="17" font-weight="400" fill="#5A6472" letter-spacing="0.5">Software Transactional Memory for .NET</text>
+  </g>
+</svg>

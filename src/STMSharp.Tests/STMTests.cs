@@ -564,33 +564,36 @@ namespace STMSharp.Tests
         }
 
         [Fact]
-        public void NonTransactionalWrite_DoesNotLeaveOddVersion()
+        public void NonTransactionalWrite_PublishesValueAndAdvancesVersion()
         {
             ResetStats();
             var x = new STMVariable<int>(0);
+            var v0 = x.Version;
 
             x.Write(1);
 
-            Assert.True((x.Version & 1L) == 0, $"Version should be even after Write, but was {x.Version}.");
+            // The write must publish the value and advance the version (a global commit stamp).
+            // If the direct write had left the variable reserved, ReadWithVersion would spin
+            // forever; its completion confirms there is no stuck reservation.
+            Assert.True(x.Version > v0, $"Version should advance after Write. Before={v0}, After={x.Version}.");
 
             var (value, version) = x.ReadWithVersion();
             Assert.Equal(1, value);
-            Assert.True((version & 1L) == 0, $"Snapshot version should be even, but was {version}.");
+            Assert.Equal(x.Version, version);
         }
 
         [Fact]
-        public void IncrementVersion_PreservesEvenParity_AndAdvances()
+        public void IncrementVersion_AdvancesVersion()
         {
             ResetStats();
             var x = new STMVariable<int>(0);
 
             var v0 = x.Version;
-            Assert.True((v0 & 1L) == 0, $"Initial version should be even, but was {v0}.");
+            Assert.Equal(0, v0);
 
             x.IncrementVersion();
 
             var v1 = x.Version;
-            Assert.True((v1 & 1L) == 0, $"Version should remain even after IncrementVersion, but was {v1}.");
             Assert.True(v1 > v0, $"Version should increase. Before={v0}, After={v1}.");
         }
     }
