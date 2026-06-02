@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/engineering87/stmsharp/main/assets/stmsharp-logo.png" alt="STMSharp" width="460"/>
+<img src="assets/stmsharp-logo.png" alt="STMSharp" width="460"/>
 
 **Composable, lock-free-in-userland concurrency for .NET, built on a TL2-style Software Transactional Memory engine.**
 
