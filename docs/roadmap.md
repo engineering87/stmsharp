@@ -75,10 +75,12 @@ now the single most valuable remaining piece of technical work.
   contended transaction that retries many times does not allocate many times. Target the
   several-hundred-bytes-per-attempt figure measured in the run and confirm the reduction
   against the lock baseline before and after.
-- Add an exception-free budget-exhaustion path. Provide a `TryAtomic` surface that returns
-  an outcome rather than throwing `TransactionConflictException`, so the normal contended
-  retry loop does not pay a stack unwind. The throwing `Atomic` stays for callers that
-  prefer it; the consistency model gains a sentence describing both outcomes.
+- Exception-free budget-exhaustion path: IMPLEMENTED (pending local build/test validation).
+  `TryAtomic` returns the outcome (`Task<bool>` for void forms, `Task<(bool Committed,
+  TResult Value)>` for the value form) instead of throwing `TransactionConflictException`,
+  so the contended retry loop does not pay a stack unwind. The throwing `Atomic` stays and
+  now shares a single non-throwing core. The consistency model describes both outcomes.
+  Covered by `TryAtomicTests`. Allocation reduction (below) is the remaining Phase 1 work.
 
 Each change is measured with the comparative benchmark, before and after, on the same
 machine.

@@ -153,6 +153,113 @@ namespace STMSharp.Core
         }
 
         // =====================================================================
+        // Exception-free API: TryAtomic reports budget exhaustion through its return
+        // value instead of throwing TransactionConflictException. The void forms return
+        // Task<bool> (true if committed); the value form returns Task<(bool Committed,
+        // TResult Value)>, a tuple rather than a named type so the Try pattern composes
+        // with async without an out parameter. On a non-committed result Value is default.
+        // =====================================================================
+
+        public static Task<bool> TryAtomic(
+            Action<ITransaction> action,
+            int maxAttempts = DefaultMaxAttempts,
+            int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds,
+            int maxBackoffMilliseconds = DefaultMaxBackoffMilliseconds,
+            BackoffType backoffType = DefaultBackoffType,
+            bool readOnly = false,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(action);
+            ValidateBudget(maxAttempts, initialBackoffMilliseconds, maxBackoffMilliseconds);
+
+            return TryRunVoidAsync(
+                tx => { action(tx); return Task.FromResult<object?>(null); },
+                maxAttempts, initialBackoffMilliseconds, maxBackoffMilliseconds,
+                backoffType, readOnly, cancellationToken);
+        }
+
+        public static Task<bool> TryAtomic(
+            Func<ITransaction, Task> func,
+            int maxAttempts = DefaultMaxAttempts,
+            int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds,
+            int maxBackoffMilliseconds = DefaultMaxBackoffMilliseconds,
+            BackoffType backoffType = DefaultBackoffType,
+            bool readOnly = false,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(func);
+            ValidateBudget(maxAttempts, initialBackoffMilliseconds, maxBackoffMilliseconds);
+
+            return TryRunVoidAsync(
+                async tx => { await func(tx).ConfigureAwait(false); return null; },
+                maxAttempts, initialBackoffMilliseconds, maxBackoffMilliseconds,
+                backoffType, readOnly, cancellationToken);
+        }
+
+        public static Task<bool> TryAtomic(
+            Action<ITransaction> action,
+            StmOptions? options,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(action);
+            options ??= StmOptions.Default;
+            var (maxAttempts, baseMs, maxMs, strategy, isReadOnly) = options.ToPolicyArgs();
+
+            return TryRunVoidAsync(
+                tx => { action(tx); return Task.FromResult<object?>(null); },
+                maxAttempts, baseMs, maxMs, strategy, isReadOnly, cancellationToken);
+        }
+
+        public static async Task<(bool Committed, TResult Value)> TryAtomic<TResult>(
+            Func<ITransaction, Task<TResult>> func,
+            int maxAttempts = DefaultMaxAttempts,
+            int initialBackoffMilliseconds = DefaultInitialBackoffMilliseconds,
+            int maxBackoffMilliseconds = DefaultMaxBackoffMilliseconds,
+            BackoffType backoffType = DefaultBackoffType,
+            bool readOnly = false,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(func);
+            ValidateBudget(maxAttempts, initialBackoffMilliseconds, maxBackoffMilliseconds);
+
+            return await TryRunCoreAsync(
+                func,
+                maxAttempts, initialBackoffMilliseconds, maxBackoffMilliseconds,
+                backoffType, readOnly, cancellationToken).ConfigureAwait(false);
+        }
+
+        public static async Task<(bool Committed, TResult Value)> TryAtomic<TResult>(
+            Func<ITransaction, Task<TResult>> func,
+            StmOptions? options,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(func);
+            options ??= StmOptions.Default;
+            var (maxAttempts, baseMs, maxMs, strategy, isReadOnly) = options.ToPolicyArgs();
+
+            return await TryRunCoreAsync(
+                func,
+                maxAttempts, baseMs, maxMs, strategy, isReadOnly, cancellationToken).ConfigureAwait(false);
+        }
+
+        // Shared helper for the void TryAtomic forms: runs the non-throwing core and
+        // projects the outcome to a simple committed flag.
+        private static async Task<bool> TryRunVoidAsync(
+            Func<StmTransaction, Task<object?>> body,
+            int maxAttempts,
+            int baseMs,
+            int maxMs,
+            BackoffType strategy,
+            bool isReadOnly,
+            CancellationToken cancellationToken)
+        {
+            var (committed, _) = await TryRunCoreAsync(
+                body, maxAttempts, baseMs, maxMs, strategy, isReadOnly, cancellationToken)
+                .ConfigureAwait(false);
+            return committed;
+        }
+
+        // =====================================================================
         // Legacy single-type API (delegates to the core via LegacyTransactionView).
         // =====================================================================
 
@@ -288,7 +395,33 @@ namespace STMSharp.Core
         // Shared retry/backoff loop. All public Atomic overloads route here.
         // =====================================================================
 
+        // Throwing entry point: runs the transaction and throws TransactionConflictException
+        // if the retry budget is exhausted. Used by the Atomic(...) surface.
         private static async Task<TResult> RunCoreAsync<TResult>(
+            Func<StmTransaction, Task<TResult>> body,
+            int maxAttempts,
+            int baseMs,
+            int maxMs,
+            BackoffType strategy,
+            bool isReadOnly,
+            CancellationToken cancellationToken)
+        {
+            var (committed, value) = await TryRunCoreAsync(
+                body, maxAttempts, baseMs, maxMs, strategy, isReadOnly, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (!committed)
+                throw new TransactionConflictException(
+                    $"STM transaction failed to commit after {maxAttempts} attempt(s) due to repeated conflicts.");
+
+            return value;
+        }
+
+        // Non-throwing core: runs the transaction and reports whether it committed within the
+        // retry budget, without raising TransactionConflictException. Budget exhaustion is a
+        // normal, expected outcome under contention, so reporting it through the return value
+        // avoids the cost of throwing and unwinding on the contended path. Used by TryAtomic.
+        private static async Task<(bool Committed, TResult Value)> TryRunCoreAsync<TResult>(
             Func<StmTransaction, Task<TResult>> body,
             int maxAttempts,
             int baseMs,
@@ -326,7 +459,7 @@ namespace STMSharp.Core
                 }
 
                 if (!aborted && transaction.Commit())
-                    return result;
+                    return (true, result);
 
                 StmTransaction.IncrementConflict();
                 StmTransaction.IncrementRetry();
@@ -339,8 +472,7 @@ namespace STMSharp.Core
             }
 
             StmTransaction.IncrementUnresolvedConflictCount();
-            throw new TransactionConflictException(
-                $"STM transaction failed to commit after {maxAttempts} attempt(s) due to repeated conflicts.");
+            return (false, default!);
         }
 
         // Two-phase backoff. The first SpinRetries attempts back off with a bounded CPU spin

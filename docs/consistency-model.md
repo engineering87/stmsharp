@@ -84,9 +84,13 @@ commit-time work.
   retried automatically.
 - A commit that fails read-set revalidation or write-set lock acquisition aborts and is
   retried automatically.
-- Retries are bounded by `MaxAttempts`. When the budget is exhausted, the engine throws
-  `TransactionConflictException`. A caller that must not drop the operation should catch
-  it and re-enter the atomic block.
+- Retries are bounded by `MaxAttempts`. When the budget is exhausted, the `Atomic` entry
+  points throw `TransactionConflictException`, while the `TryAtomic` entry points instead
+  report the failure through their return value (`false`, or a tuple with `Committed ==
+  false`) without throwing. Budget exhaustion is a normal outcome under contention, so
+  `TryAtomic` is the cheaper path on a contended hot loop. Either way no writes are
+  published on a failed commit; a caller that must not drop the operation re-enters the
+  atomic block.
 - Backoff between retries is two-phase: the first retries use a bounded sub-millisecond
   CPU spin with a cooperative yield and no timer, and only sustained contention reaches
   the configured timed ladder. This is a performance property, not a correctness one;

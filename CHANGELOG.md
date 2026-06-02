@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Exception-free `TryAtomic` surface (void forms return `Task<bool>`; value form
+  returns `Task<(bool Committed, TResult Value)>`), reporting budget exhaustion
+  through the return value instead of throwing. Shared non-throwing core with
+  `Atomic`. Covered by `TryAtomicTests`. NOTE: not yet validated locally.
 - Blocking composition: `ITransaction.Retry()`. A transaction that cannot make
   progress with its current snapshot blocks on its read set and is woken when
   another transaction commits a change to one of those variables, then

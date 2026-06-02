@@ -19,7 +19,7 @@ namespace STMSharp.Tests
         {
             var counter = new STMVariable<int>(10);
 
-            await STMEngine.Atomic(tx => tx.Commute(counter, x => x + 5));
+            await STMEngine.Atomic(tx => tx.Commute(counter, x => x + 5), cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.Equal(15, counter.Read());
         }
@@ -34,7 +34,7 @@ namespace STMSharp.Tests
                 tx.Commute(counter, x => x + 1);
                 tx.Commute(counter, x => x + 10);
                 tx.Commute(counter, x => x * 2); // (((0+1)+10)*2) = 22
-            });
+            }, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.Equal(22, counter.Read());
         }
@@ -62,7 +62,8 @@ namespace STMSharp.Tests
                             maxAttempts: 64,
                             initialBackoffMilliseconds: 0,
                             maxBackoffMilliseconds: 2,
-                            backoffType: BackoffType.ExponentialWithJitter);
+                            backoffType: BackoffType.ExponentialWithJitter,
+                            cancellationToken: TestContext.Current.CancellationToken);
                     }
                 });
             }
@@ -84,7 +85,7 @@ namespace STMSharp.Tests
             {
                 tx.Commute(v, x => x + 1);
                 seen = tx.Read(v); // forces fallback: must see 101 within the transaction
-            });
+            }, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.Equal(101, seen);
             Assert.Equal(101, v.Read());
@@ -102,7 +103,7 @@ namespace STMSharp.Tests
             {
                 tx.Commute(v, x => x + 999);
                 tx.Write(v, 7);
-            });
+            }, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.Equal(7, v.Read());
         }
@@ -114,12 +115,12 @@ namespace STMSharp.Tests
 
             await Assert.ThrowsAsync<ArgumentNullException>(async () =>
             {
-                await STMEngine.Atomic(tx => tx.Commute<int>(null!, x => x + 1));
+                await STMEngine.Atomic(tx => tx.Commute<int>(null!, x => x + 1), cancellationToken: TestContext.Current.CancellationToken);
             });
 
             await Assert.ThrowsAsync<ArgumentNullException>(async () =>
             {
-                await STMEngine.Atomic(tx => tx.Commute(v, null!));
+                await STMEngine.Atomic(tx => tx.Commute(v, null!), cancellationToken: TestContext.Current.CancellationToken);
             });
         }
     }

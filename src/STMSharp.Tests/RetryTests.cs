@@ -28,7 +28,7 @@ namespace STMSharp.Tests
                 await STMEngine.Atomic(tx =>
                 {
                     tx.Retry();
-                });
+                }, cancellationToken: TestContext.Current.CancellationToken);
             });
         }
 
@@ -48,7 +48,7 @@ namespace STMSharp.Tests
                     if (current == 0)
                         tx.Retry();   // block on flag until a producer commits a change
                     observed = current;
-                });
+                }, cancellationToken: TestContext.Current.CancellationToken);
                 return observed;
             });
 
@@ -56,13 +56,13 @@ namespace STMSharp.Tests
             Assert.False(consumer.IsCompleted, "Consumer should be blocked while flag is zero.");
 
             // Give it a moment to actually park, then publish a change to wake it.
-            await Task.Delay(100);
+            await Task.Delay(100, TestContext.Current.CancellationToken);
             Assert.False(consumer.IsCompleted, "Consumer should still be blocked before the producer commits.");
 
-            await STMEngine.Atomic(tx => tx.Write(flag, 42));
+            await STMEngine.Atomic(tx => tx.Write(flag, 42), cancellationToken: TestContext.Current.CancellationToken);
 
             // The wake-up must let the consumer re-execute and complete promptly.
-            var completed = await Task.WhenAny(consumer, Task.Delay(5000));
+            var completed = await Task.WhenAny(consumer, Task.Delay(5000, TestContext.Current.CancellationToken));
             Assert.Same(consumer, completed);
             Assert.Equal(42, await consumer);
         }
@@ -89,7 +89,7 @@ namespace STMSharp.Tests
                         if (tx.Read(slot) != 0)
                             tx.Retry();          // buffer full: wait for the consumer
                         tx.Write(slot, i);
-                    });
+                    }, cancellationToken: TestContext.Current.CancellationToken);
                     produced.Add(i);
                 }
             });
@@ -106,13 +106,13 @@ namespace STMSharp.Tests
                             tx.Retry();          // buffer empty: wait for the producer
                         item = v;
                         tx.Write(slot, 0);       // mark consumed
-                    });
+                    }, cancellationToken: TestContext.Current.CancellationToken);
                     consumed.Add(item);
                 }
             });
 
             var all = Task.WhenAll(producer, consumer);
-            var finished = await Task.WhenAny(all, Task.Delay(30000));
+            var finished = await Task.WhenAny(all, Task.Delay(30000, TestContext.Current.CancellationToken));
             Assert.Same(all, finished); // fail by timeout if a wake-up was lost
 
             Assert.Equal(itemCount, consumed.Count);
@@ -137,7 +137,7 @@ namespace STMSharp.Tests
                 // Block only on the first attempt; on the timeout-driven re-execution, proceed.
                 if (attempts == 1)
                     tx.Retry();
-            });
+            }, cancellationToken: TestContext.Current.CancellationToken);
             sw.Stop();
 
             Assert.True(attempts >= 2, "The transaction should have re-executed after the safety-valve timeout.");

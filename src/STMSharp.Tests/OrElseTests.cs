@@ -25,7 +25,7 @@ namespace STMSharp.Tests
                 tx.OrElse(
                     first: t => { observed = t.Read(v); },          // completes, does not block
                     second: t => { secondRan = true; });
-            });
+            }, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.Equal(7, observed);
             Assert.False(secondRan, "Second alternative must not run when the first completes.");
@@ -51,10 +51,10 @@ namespace STMSharp.Tests
                         // Must observe the committed value, not the first alternative's 999.
                         t.Write(target, t.Read(target) + 1);
                     });
-            });
+            }, cancellationToken: TestContext.Current.CancellationToken);
 
             // Second alternative ran on the original value (0 -> 1); first's 999 was rolled back.
-            Assert.Equal(1, await STMEngine.Atomic(async t => { await Task.Yield(); return t.Read(target); }));
+            Assert.Equal(1, await STMEngine.Atomic(async t => { await Task.Yield(); return t.Read(target); }, cancellationToken: TestContext.Current.CancellationToken));
         }
 
         [Fact]
@@ -73,18 +73,18 @@ namespace STMSharp.Tests
                     tx.OrElse(
                         first: t => { if (t.Read(a) == 0) t.Retry(); result = 1; },
                         second: t => { if (t.Read(b) == 0) t.Retry(); result = 2; });
-                });
+                }, cancellationToken: TestContext.Current.CancellationToken);
                 return result;
             });
 
             Assert.False(waiter.IsCompleted, "Should block while both a and b are zero.");
-            await Task.Delay(100);
+            await Task.Delay(100, TestContext.Current.CancellationToken);
             Assert.False(waiter.IsCompleted, "Should still block before any commit.");
 
             // Wake via the SECOND alternative's watched variable, proving union blocking.
-            await STMEngine.Atomic(tx => tx.Write(b, 5));
+            await STMEngine.Atomic(tx => tx.Write(b, 5), cancellationToken: TestContext.Current.CancellationToken);
 
-            var finished = await Task.WhenAny(waiter, Task.Delay(5000));
+            var finished = await Task.WhenAny(waiter, Task.Delay(5000, TestContext.Current.CancellationToken));
             Assert.Same(waiter, finished);
             Assert.Equal(2, await waiter); // second alternative completed after b changed
         }
@@ -96,12 +96,12 @@ namespace STMSharp.Tests
 
             await Assert.ThrowsAsync<ArgumentNullException>(async () =>
             {
-                await STMEngine.Atomic(tx => tx.OrElse(null!, t => { }));
+                await STMEngine.Atomic(tx => tx.OrElse(null!, t => { }), cancellationToken: TestContext.Current.CancellationToken);
             });
 
             await Assert.ThrowsAsync<ArgumentNullException>(async () =>
             {
-                await STMEngine.Atomic(tx => tx.OrElse(t => { }, null!));
+                await STMEngine.Atomic(tx => tx.OrElse(t => { }, null!), cancellationToken: TestContext.Current.CancellationToken);
             });
         }
     }
