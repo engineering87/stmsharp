@@ -22,8 +22,9 @@ namespace STMSharp.Core.Backoff
         /// based on the specified backoff algorithm and the number of retry attempts.
         ///
         /// Notes:
-        /// - Attempts are zero-based, but always clamped to >= 0.
-        /// - baseDelay and maxDelay are also clamped to >= 1.
+        /// - <paramref name="attempt"/> is clamped to &gt;= 0.
+        /// - <paramref name="baseDelay"/> is clamped to &gt;= 0 (0 means "no delay").
+        /// - <paramref name="maxDelay"/> is clamped to &gt;= 0.
         /// - Exponential backoff is capped to prevent overflow (max shift = 30).
         /// - ExponentialWithJitter introduces randomness to reduce synchronized retries.
         /// </summary>
@@ -34,8 +35,12 @@ namespace STMSharp.Core.Backoff
             int maxDelay = 2000)
         {
             attempt = Math.Max(0, attempt);
-            baseDelay = Math.Max(1, baseDelay);
-            maxDelay = Math.Max(1, maxDelay);
+            baseDelay = Math.Max(0, baseDelay);
+            maxDelay = Math.Max(0, maxDelay);
+
+            // If both delays are zero, no waiting is required.
+            if (baseDelay == 0 || maxDelay == 0)
+                return 0;
 
             // Local helper for exponential calculation:
             // (baseDelay * 2^attempt) but capped to avoid overflow.
@@ -43,7 +48,7 @@ namespace STMSharp.Core.Backoff
             {
                 int shift = Math.Min(a, 30);
                 long value = ((long)baseDelay) << shift;
-                return (int)Math.Clamp(value, 1, maxDelay);
+                return (int)Math.Clamp(value, 0, maxDelay);
             }
 
             return type switch
@@ -53,12 +58,13 @@ namespace STMSharp.Core.Backoff
                     CapExp(attempt),
 
                 BackoffType.ExponentialWithJitter =>
-                    // Adds randomness in the range [1, CapExp(attempt)] to reduce herd effects
-                    Random.Shared.Next(1, CapExp(attempt) + 1),
+                    // Full-jitter: random delay in [0, CapExp(attempt)] to reduce herd effects.
+                    Random.Shared.Next(0, CapExp(attempt) + 1),
 
                 BackoffType.Linear =>
                     // Linearly increasing delay: baseDelay * (attempt + 1)
-                    Math.Min(baseDelay * (attempt + 1), maxDelay),
+                    // Use long arithmetic to prevent int overflow on large values.
+                    (int)Math.Min((long)baseDelay * (attempt + 1), maxDelay),
 
                 BackoffType.Constant =>
                     // Always return baseDelay
@@ -85,8 +91,8 @@ namespace STMSharp.Core.Backoff
             var ms = GetDelayMilliseconds(
                 type,
                 attempt,
-                (int)Math.Max(1, baseDelay.TotalMilliseconds),
-                (int)Math.Max(1, (maxDelay ?? TimeSpan.FromMilliseconds(2000)).TotalMilliseconds));
+                (int)Math.Max(0, baseDelay.TotalMilliseconds),
+                (int)Math.Max(0, (maxDelay ?? TimeSpan.FromMilliseconds(2000)).TotalMilliseconds));
 
             return TimeSpan.FromMilliseconds(ms);
         }

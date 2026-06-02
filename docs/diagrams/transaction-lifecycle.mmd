@@ -1,0 +1,6 @@
+flowchart TD
+    A([Start: sample version, run delegate]) --> B{Snapshot consistent<br/>through commit?}
+    B -->|Yes| C([Publish writes, stamp version])
+    B -->|No| D{Attempts below budget?}
+    D -->|Yes| E[Backoff and retry] --> A
+    D -->|No| F([Fail: throw or return false])

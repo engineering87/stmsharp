@@ -16,7 +16,15 @@ namespace STMSharp.Core
         BackoffType Strategy = BackoffType.ExponentialWithJitter,
         TransactionMode Mode = TransactionMode.ReadWrite)
     {
-        public static StmOptions Default => new(
+        public int MaxAttempts { get; init; } = MaxAttempts > 0
+            ? MaxAttempts
+            : throw new ArgumentOutOfRangeException(nameof(MaxAttempts), "MaxAttempts must be greater than 0.");
+
+        public TimeSpan BaseDelay { get; init; } = BaseDelay >= TimeSpan.Zero
+            ? BaseDelay
+            : throw new ArgumentOutOfRangeException(nameof(BaseDelay), "BaseDelay must be non-negative.");
+
+        private static readonly StmOptions s_default = new(
             MaxAttempts: 3,
             BaseDelay: TimeSpan.FromMilliseconds(100),
             MaxDelay: TimeSpan.FromMilliseconds(2000),
@@ -24,14 +32,18 @@ namespace STMSharp.Core
             Mode: TransactionMode.ReadWrite
         );
 
-        public static StmOptions ReadOnly => Default with { Mode = TransactionMode.ReadOnly };
+        private static readonly StmOptions s_readOnly = s_default with { Mode = TransactionMode.ReadOnly };
+
+        public static StmOptions Default => s_default;
+
+        public static StmOptions ReadOnly => s_readOnly;
 
         public bool IsReadOnly => Mode == TransactionMode.ReadOnly;
 
         internal (int maxAttempts, int baseMs, int maxMs, BackoffType strategy, bool isReadOnly) ToPolicyArgs()
         {
-            var baseMs = (int)Math.Max(1, BaseDelay.TotalMilliseconds);
-            var maxMs = (int)Math.Max(1, (MaxDelay ?? TimeSpan.FromMilliseconds(2000)).TotalMilliseconds);
+            var baseMs = (int)Math.Clamp(BaseDelay.TotalMilliseconds, 0, int.MaxValue);
+            var maxMs = (int)Math.Clamp((MaxDelay ?? TimeSpan.FromMilliseconds(2000)).TotalMilliseconds, 0, int.MaxValue);
 
             return (Math.Max(1, MaxAttempts), baseMs, maxMs, Strategy, IsReadOnly);
         }

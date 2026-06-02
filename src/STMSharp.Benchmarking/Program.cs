@@ -2,6 +2,7 @@
 // This code is licensed under MIT license (see LICENSE.txt for details)
 using STMSharp.Benchmarking.Config;
 using STMSharp.Core;
+using STMSharp.Core.Exceptions;
 using System.Diagnostics;
 using System.Text.Json;
 
@@ -67,6 +68,7 @@ namespace STMSharp.Benchmarking
             // Use public diagnostics helper instead of internal Transaction<T>
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine($"{"Total conflicts resolved:".PadLeft(30)} {STMDiagnostics.GetConflictCount<int>()}");
+            Console.WriteLine($"{"Total conflicts unresolved:".PadLeft(30)} {STMDiagnostics.GetUnresolvedConflictCount<int>()}");
             Console.WriteLine($"{"Total retries attempted:".PadLeft(30)} {STMDiagnostics.GetRetryCount<int>()}");
 
             int finalValue = 0;
@@ -125,11 +127,11 @@ namespace STMSharp.Benchmarking
                 // Optional artificial processing delay between batches
                 await Task.Delay(Config.ProcessingTime);
             }
-            catch (TimeoutException ex)
+            catch (TransactionConflictException ex)
             {
-                // Log timeout and continue benchmark
+                // Log conflict exhaustion and continue benchmark
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"Warning: transaction timed out after max attempts: {ex.Message}");
+                Console.WriteLine($"Warning: transaction failed after max attempts: {ex.Message}");
                 Console.ResetColor();
             }
         }
