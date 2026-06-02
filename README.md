@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/stmsharp-logo.svg" alt="STMSharp" width="460"/>
+<img src="https://raw.githubusercontent.com/engineering87/stmsharp/main/assets/stmsharp-logo.png" alt="STMSharp" width="460"/>
 
 **Composable, lock-free-in-userland concurrency for .NET, built on a TL2-style Software Transactional Memory engine.**
 
@@ -368,11 +368,10 @@ Console.WriteLine($"Conflicts: {conflicts}, Retries: {retries}, Unresolved: {unr
 
 ## Contributing
 
-If you would like to contribute, please fork the repository, make your changes, and open a pull request for review.
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and the expectations for code changes, which are held to a high standard because STMSharp is a concurrency library. Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md), and security issues should be reported following the [Security Policy](SECURITY.md).
 
-- [Setting up Git](https://docs.github.com/en/get-started/getting-started-with-git/set-up-git)
-- [Fork the repository](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/working-with-forks/fork-a-repo)
 - [Open an issue](https://github.com/engineering87/stmsharp/issues) if you encounter a bug or have a suggestion
+- [Fork the repository](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/working-with-forks/fork-a-repo) and open a pull request for review
 
 ## License
 
