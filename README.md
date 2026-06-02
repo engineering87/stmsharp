@@ -2,7 +2,7 @@
 
 <img src="assets/stmsharp-logo.png" alt="STMSharp" width="460"/>
 
-**Composable, lock-free-in-userland concurrency for .NET, built on a TL2-style Software Transactional Memory engine.**
+**Composable, atomic, multi-variable concurrency for .NET, built on a TL2-style Software Transactional Memory engine.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Nuget](https://img.shields.io/nuget/v/STMSharp?style=flat)](https://www.nuget.org/packages/STMSharp)

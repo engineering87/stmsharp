@@ -12,9 +12,9 @@
 
     <!-- Package metadata -->
     <Title>STMSharp</Title>
-    <Description>STMSharp is a .NET library for lock-free synchronization using Software Transactional Memory (STM), enabling atomic transactions over shared variables with optimistic snapshots and a CAS-based commit.</Description>
+    <Description>A .NET library for composable, atomic transactions over shared variables using Software Transactional Memory, with optimistic snapshots, automatic conflict detection and retry, and no explicit locks in user code.</Description>
     <Authors>Francesco Del Re</Authors>
-    <PackageTags>stm;software-transactional-memory;concurrency;lock-free;cas;atomic;transactions;multithreading</PackageTags>
+    <PackageTags>stm;software-transactional-memory;concurrency;composable;tl2;cas;atomic;transactions;multithreading</PackageTags>
     <PackageProjectUrl>https://github.com/engineering87/stmsharp</PackageProjectUrl>
     <RepositoryUrl>https://github.com/engineering87/stmsharp</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
