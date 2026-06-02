@@ -24,6 +24,20 @@ namespace STMSharp.Core.Interfaces
         /// Buffers a write to a variable. The write is applied atomically at commit.
         /// </summary>
         void Write<T>(STMVariable<T> variable, T value);
+
+        /// <summary>
+        /// Abandons the current attempt and blocks until one of the variables read so far
+        /// is changed by another committed transaction, then re-executes the transaction
+        /// from the start. This is condition synchronization without a lock and without
+        /// busy-waiting: a consumer that finds nothing to consume calls <c>Retry</c> and is
+        /// woken when a producer commits.
+        ///
+        /// Calling <c>Retry</c> with an empty read set would block forever, since nothing
+        /// could ever wake it; that case throws <see cref="System.InvalidOperationException"/>.
+        /// The transactional delegate must be free of irreversible side effects, because it
+        /// will run again after the wake-up.
+        /// </summary>
+        void Retry();
     }
 
     /// <summary>

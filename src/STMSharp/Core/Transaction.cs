@@ -105,6 +105,17 @@ namespace STMSharp.Core
             _writeCount++;
         }
 
+        public void Retry()
+        {
+            // Blocking with an empty read set could never be woken: reject it explicitly
+            // rather than park forever.
+            if (_readCount == 0)
+                throw new InvalidOperationException(
+                    "Retry() requires at least one prior Read; an empty read set could never be woken.");
+
+            throw new TransactionBlockedException();
+        }
+
         /// <summary>
         /// Attempts to commit. Returns false if the transaction must be retried.
         /// </summary>
@@ -177,6 +188,11 @@ namespace STMSharp.Core
             for (int i = 0; i < _writeCount; i++)
                 _writeVars![i].UnlockWithVersion(writeVersion);
 
+            // All locks released: now it is safe to wake any transactions blocked (via Retry)
+            // on the variables this transaction changed. Done last so no STM lock is held.
+            for (int i = 0; i < _writeCount; i++)
+                _writeVars![i].SignalCommitted();
+
             return true;
         }
 
@@ -213,6 +229,47 @@ namespace STMSharp.Core
                 Array.Resize(ref _readVars, _readVars.Length * 2);
 
             _readVars![_readCount++] = v;
+        }
+
+        // --------------------------------------------------------------------
+        // Blocking support for Retry, used by the engine. These run between attempts,
+        // on the engine's flow, never concurrently with this transaction's own Read/Write.
+        // --------------------------------------------------------------------
+
+        /// <summary>Number of distinct variables read, exposed so the engine can detect
+        /// the degenerate empty-read-set case before parking.</summary>
+        internal int ReadCount => _readCount;
+
+        /// <summary>Registers the wake handle against every variable in the read set.</summary>
+        internal void RegisterWaiters(System.Threading.ManualResetEventSlim waiter)
+        {
+            for (int i = 0; i < _readCount; i++)
+                _readVars![i].RegisterWaiter(waiter);
+        }
+
+        /// <summary>Removes the wake handle from every variable in the read set.</summary>
+        internal void UnregisterWaiters(System.Threading.ManualResetEventSlim waiter)
+        {
+            for (int i = 0; i < _readCount; i++)
+                _readVars![i].UnregisterWaiter(waiter);
+        }
+
+        /// <summary>
+        /// Returns true if any read-set variable has already advanced past this transaction's
+        /// start version, or is currently locked by a committer. The engine calls this after
+        /// registering waiters but before parking: if it returns true the engine must not park,
+        /// because the change it would have waited for may have already happened, which is how
+        /// the lost-wake-up window is closed.
+        /// </summary>
+        internal bool ReadSetChangedSinceStart()
+        {
+            for (int i = 0; i < _readCount; i++)
+            {
+                long word = _readVars![i].VersionLockWord;
+                if (VersionLock.IsLocked(word) || VersionLock.VersionOf(word) > _readVersion)
+                    return true;
+            }
+            return false;
         }
 
         public static int ConflictCount => Volatile.Read(ref _conflictCount);

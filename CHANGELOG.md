@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Blocking composition: `ITransaction.Retry()`. A transaction that cannot make
+  progress with its current snapshot blocks on its read set and is woken when
+  another transaction commits a change to one of those variables, then
+  re-executes. Implemented with a lazily-allocated per-variable wait registry on
+  `STMVariable<T>`, a distinct internal `TransactionBlockedException` signal, a
+  recheck after registration that closes the lost-wake-up window, and a
+  one-second safety-valve timeout so a missed wake degrades to a slow retry
+  rather than a hang. Blocking does not consume the conflict-retry budget.
+  Covered by `RetryTests`, including a one-slot producer/consumer test that
+  fails by timeout if a wake-up is lost. NOTE: not yet validated by a local
+  build/test run; `orElse` and commutative operations are deliberately deferred
+  to follow once `retry` is validated.
+
+### Fixed
+
+- Corrected `BackoffPolicyTests.ExponentialWithJitter_ReturnsWithinExpectedRange`
+  to match the real full-jitter contract. The delay is `Random.Shared.Next(0,
+  CapExp + 1)`, an inclusive `[0, CapExp]` range, so zero is a deliberate, valid
+  outcome that breaks synchronized retry storms. The test previously asserted a
+  `[1, CapExp]` range and failed intermittently when the jitter returned zero. The
+  production behavior was correct and is unchanged.
+
+### Documentation
+
+- Rewrote the README to match the current TL2 protocol and the non-generic
+  `ITransaction` surface. The previous README still described the superseded
+  even/odd version scheme, the generic `Transaction<T>`, `_snapshotVersions`,
+  and `TryAcquireForWrite`, none of which exist in the current code.
+- Added `docs/consistency-model.md`, a normative specification of the guarantees
+  (atomicity, serializability, opacity, read-your-own-writes, deadlock-free
+  commit), the failure and retry semantics, and the boundaries (mutable
+  reference types, direct non-transactional writes, single-flow transactions,
+  transactional-dictionary granularity).
+- Added `docs/design-retry-orelse-commute.md`, a design note (not yet
+  implemented) for blocking composition (`retry`, `orElse`) and commutative
+  operations, with the suggested incremental order.
+- Added the `STMSharp.Comparative` benchmark project (registered in the
+  solution): a lock-based baseline and an STMSharp contended-counter
+  benchmark, running the identical workload and asserting the final total so
+  a lossy run fails loudly. The comparison is deliberately limited to STMSharp
+  against a lock-based baseline, with no dependency on any third-party STM
+  library. Not yet run; results are pending real hardware.
+- Updated `docs/roadmap.md` with the findings of the first comparative run
+  (single-counter contention): allocation profile and an exception-free
+  budget-exhaustion path promoted to Phase 1, commutative operations tied to
+  the contention case, and a disjoint-access benchmark plus an honest
+  performance-claim rewrite scheduled. Lock-only, no third-party STM dependency.
+- Added `DisjointAccessBenchmark` to `STMSharp.Comparative`: each thread
+  operates on its own cell, contrasting a global lock that serializes
+  independent work against STMSharp transactions that commit concurrently.
+  It complements the single-counter worst case. Not yet run.
+
 ### Changed (BREAKING)
 
 - The transaction core is now non-generic: a single transaction can read and

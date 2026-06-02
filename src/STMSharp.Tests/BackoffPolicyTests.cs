@@ -32,12 +32,14 @@ namespace STMSharp.Tests
         [Fact]
         public void ExponentialWithJitter_ReturnsWithinExpectedRange()
         {
-            // For attempt=2, baseDelay=100: CapExp = min(400, maxDelay=10000) = 400
-            // Jitter is Random.Shared.Next(1, 401) → range [1, 400]
+            // For attempt=2, baseDelay=100: CapExp = min(400, maxDelay=10000) = 400.
+            // This is full-jitter: Random.Shared.Next(0, CapExp + 1) → range [0, 400]
+            // inclusive. Zero is a deliberate, valid outcome; it is what breaks synchronized
+            // retry storms, so the test must allow it.
             for (int i = 0; i < 50; i++)
             {
                 var delay = BackoffPolicy.GetDelayMilliseconds(BackoffType.ExponentialWithJitter, 2, 100, 10000);
-                Assert.InRange(delay, 1, 400);
+                Assert.InRange(delay, 0, 400);
             }
         }
 

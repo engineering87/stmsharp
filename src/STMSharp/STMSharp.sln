@@ -11,6 +11,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "STMSharp.Benchmarking", "..
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "STMSharp.PerformanceTests", "..\STMSharp.PerformanceTests\STMSharp.PerformanceTests.csproj", "{73D491B5-6B53-4933-A56D-307B0FFC3562}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "STMSharp.Comparative", "..\STMSharp.Comparative\STMSharp.Comparative.csproj", "{E3A4B4D7-6CAE-41C8-8819-B86E20788488}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -25,6 +27,10 @@ Global
 		{FE81E058-2B1F-4E28-9CCB-E4BE4F801826}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{FE81E058-2B1F-4E28-9CCB-E4BE4F801826}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{FE81E058-2B1F-4E28-9CCB-E4BE4F801826}.Release|Any CPU.Build.0 = Release|Any CPU
+{E3A4B4D7-6CAE-41C8-8819-B86E20788488}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E3A4B4D7-6CAE-41C8-8819-B86E20788488}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E3A4B4D7-6CAE-41C8-8819-B86E20788488}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E3A4B4D7-6CAE-41C8-8819-B86E20788488}.Release|Any CPU.Build.0 = Release|Any CPU
 		{D0F9DA58-C600-42E5-BE0F-6997B21A9503}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{D0F9DA58-C600-42E5-BE0F-6997B21A9503}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D0F9DA58-C600-42E5-BE0F-6997B21A9503}.Release|Any CPU.ActiveCfg = Release|Any CPU

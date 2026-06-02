@@ -316,6 +316,14 @@ namespace STMSharp.Core
                     // Snapshot became inconsistent mid-execution; retry the whole delegate.
                     aborted = true;
                 }
+                catch (TransactionBlockedException)
+                {
+                    // The delegate called Retry(): block until a read-set variable changes,
+                    // then re-execute. This does not consume the conflict budget, because the
+                    // transaction is waiting on a condition, not losing a race.
+                    await BlockOnReadSetAsync(transaction, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
 
                 if (!aborted && transaction.Commit())
                     return result;
@@ -360,6 +368,50 @@ namespace STMSharp.Core
             return delay > 0
                 ? Task.Delay(delay, cancellationToken)
                 : Task.CompletedTask;
+        }
+
+        // Maximum time a Retry() blocks before re-executing anyway. This is a safety valve:
+        // if a wake-up is ever missed, a blocked transaction degrades to a slow retry instead
+        // of hanging forever. It does not change semantics on a correct wake-up path.
+        private const int RetryBlockTimeoutMilliseconds = 1000;
+
+        // Parks the transaction on its read set until a committer signals one of those
+        // variables, or the safety-valve timeout elapses. The recheck after registration
+        // closes the lost-wake-up window: if the read set already changed, do not park.
+        private static async Task BlockOnReadSetAsync(StmTransaction transaction, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Defensive: Retry() already rejects an empty read set, but never park on nothing.
+            if (transaction.ReadCount == 0)
+                return;
+
+            using var waiter = new ManualResetEventSlim(initialState: false);
+            transaction.RegisterWaiters(waiter);
+            try
+            {
+                // Close the lost-wake-up window: if a relevant commit landed between the
+                // Retry() call and the registration above, the read set already shows it,
+                // so re-execute immediately rather than waiting for a signal that has passed.
+                if (transaction.ReadSetChangedSinceStart())
+                    return;
+
+                // Park the wait on a pooled thread so the async flow is not blocked. The
+                // timeout is the safety valve, not the expected wake path; a normal wake-up
+                // sets the handle well before it. ManualResetEventSlim.Wait observes the
+                // cancellation token and returns false on timeout.
+                await Task.Run(() =>
+                {
+                    try { waiter.Wait(RetryBlockTimeoutMilliseconds, cancellationToken); }
+                    catch (OperationCanceledException) { /* cancellation surfaces to the caller below */ }
+                }, cancellationToken).ConfigureAwait(false);
+
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            finally
+            {
+                transaction.UnregisterWaiters(waiter);
+            }
         }
 
         private static void ValidateBudget(int maxAttempts, int initialBackoffMilliseconds, int maxBackoffMilliseconds)

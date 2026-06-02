@@ -39,6 +39,12 @@ namespace STMSharp.Core
         // Versioned write-lock word: bit 0 = locked, remaining bits = version.
         private long _versionLock; // starts at 0 => version 0, unlocked
 
+        // Lazily-allocated set of wake handles for transactions blocked on this variable
+        // via ITransaction.Retry. Null until the first waiter registers, so variables that
+        // are never waited on pay nothing. Guarded by its own lock for register/unregister/signal.
+        private HashSet<System.Threading.ManualResetEventSlim>? _waiters;
+        private readonly object _waitersGate = new();
+
         public STMVariable(T initialValue)
         {
             _boxedValue = initialValue;
@@ -91,6 +97,7 @@ namespace STMSharp.Core
 
                 Volatile.Write(ref _boxedValue, value);
                 Volatile.Write(ref _versionLock, VersionLock.Stamp(GlobalVersionClock.Next()));
+                SignalWaiters();
                 return;
             }
         }
@@ -208,6 +215,10 @@ namespace STMSharp.Core
         void IStmVariable.UnlockWithVersion(long version)
             => Volatile.Write(ref _versionLock, VersionLock.Stamp(version));
 
+        // Explicit post-commit wake-up, called by the committer after ALL write-set locks
+        // have been released, so no STM lock is held while waiters are signaled.
+        void IStmVariable.SignalCommitted() => SignalWaiters();
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         void IStmVariable.Unlock()
         {
@@ -218,5 +229,49 @@ namespace STMSharp.Core
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         void IStmVariable.PublishBoxed(object? boxedValue)
             => Volatile.Write(ref _boxedValue, boxedValue);
+
+        // --------------------------------------------------------------------
+        // Wait registry for ITransaction.Retry (condition synchronization).
+        // --------------------------------------------------------------------
+
+        void IStmVariable.RegisterWaiter(System.Threading.ManualResetEventSlim waiter)
+        {
+            lock (_waitersGate)
+            {
+                _waiters ??= new HashSet<System.Threading.ManualResetEventSlim>();
+                _waiters.Add(waiter);
+            }
+        }
+
+        void IStmVariable.UnregisterWaiter(System.Threading.ManualResetEventSlim waiter)
+        {
+            lock (_waitersGate)
+            {
+                _waiters?.Remove(waiter);
+            }
+        }
+
+        // Wakes every transaction currently blocked on this variable. Best effort: it only
+        // sets the handles, it never runs user code, and it is called after the new version
+        // has been published, so a woken transaction re-reads a committed, consistent state.
+        private void SignalWaiters()
+        {
+            HashSet<System.Threading.ManualResetEventSlim>? snapshot;
+            lock (_waitersGate)
+            {
+                if (_waiters is null || _waiters.Count == 0)
+                    return;
+
+                // Copy under the lock, then set outside it, so a waiter unregistering during
+                // wake-up cannot mutate the set we are iterating.
+                snapshot = new HashSet<System.Threading.ManualResetEventSlim>(_waiters);
+            }
+
+            foreach (var w in snapshot)
+            {
+                try { w.Set(); } catch (ObjectDisposedException) { /* waiter already gone */ }
+            }
+        }
+
     }
 }

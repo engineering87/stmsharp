@@ -46,5 +46,23 @@ namespace STMSharp.Core.Interfaces
         /// Publishes the pending (boxed) value while the variable is locked by the committer.
         /// </summary>
         void PublishBoxed(object? boxedValue);
+
+        /// <summary>
+        /// Registers a wake handle so a transaction blocked in <see cref="ITransaction.Retry"/>
+        /// is signaled when this variable is next committed. The wait set is allocated lazily,
+        /// so variables that are never waited on stay cheap.
+        /// </summary>
+        void RegisterWaiter(System.Threading.ManualResetEventSlim waiter);
+
+        /// <summary>
+        /// Removes a previously registered wake handle (after the wait completes or times out).
+        /// </summary>
+        void UnregisterWaiter(System.Threading.ManualResetEventSlim waiter);
+
+        /// <summary>
+        /// Wakes every transaction blocked on this variable. Called by a committer after it
+        /// has released all write-set locks, so no STM lock is held during the wake-up.
+        /// </summary>
+        void SignalCommitted();
     }
 }
