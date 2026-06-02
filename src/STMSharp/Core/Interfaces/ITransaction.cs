@@ -38,6 +38,20 @@ namespace STMSharp.Core.Interfaces
         /// will run again after the wake-up.
         /// </summary>
         void Retry();
+
+        /// <summary>
+        /// Composes two alternatives within the same transaction. Runs <paramref name="first"/>;
+        /// if it completes without blocking, its effects stand and <paramref name="second"/> is
+        /// not run. If <paramref name="first"/> blocks via <see cref="Retry"/>, its tentative
+        /// writes are discarded and <paramref name="second"/> runs in their place. If
+        /// <paramref name="second"/> also blocks, the whole composition blocks on the union of
+        /// the variables read by both alternatives, so a change to any of them wakes it.
+        ///
+        /// Reads performed by a blocked first alternative are retained so the union is correct;
+        /// only its writes are rolled back. A conflict-driven retry or a user exception in either
+        /// alternative is not caught here and aborts or propagates as usual.
+        /// </summary>
+        void OrElse(Action<ITransaction> first, Action<ITransaction> second);
     }
 
     /// <summary>

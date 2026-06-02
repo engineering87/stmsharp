@@ -93,9 +93,11 @@ design is captured in `docs/design-retry-orelse-commute.md`.
   safety-valve timeout. Covered by `RetryTests`, including a one-slot producer/consumer
   test that fails by timeout on a lost wake-up. Must be compiled and tested locally before
   it is trusted.
-- `orElse` second. It composes two alternatives, trying the second only if the first
-  blocks, using the append-only buffers' counts as a cheap checkpoint to roll back the
-  first alternative's tentative effects.
+- `orElse`: IMPLEMENTED (pending local build/test validation). Composes two alternatives,
+  trying the second only if the first blocks, using the write-set count as a cheap
+  checkpoint to roll back the first alternative's tentative writes while retaining its
+  reads, so a both-block case blocks on the union of read sets. Covered by `OrElseTests`.
+  Must be compiled and tested locally before it is trusted.
 
 Each lands on its own branch, compiled and tested, before the next begins. This phase
 extends the consistency model document with the blocking semantics.

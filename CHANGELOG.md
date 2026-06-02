@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fails by timeout if a wake-up is lost. NOTE: not yet validated by a local
   build/test run; `orElse` and commutative operations are deliberately deferred
   to follow once `retry` is validated.
+- Blocking composition: `ITransaction.OrElse(first, second)`. Runs the first
+  alternative; if it blocks via `Retry`, its tentative writes are discarded and
+  the second runs in its place; if the second also blocks, the transaction
+  blocks on the union of the variables read by both alternatives. Reads of a
+  blocked first alternative are retained so the union is correct; only its writes
+  are rolled back (Haskell-STM `orElse` semantics). Covered by `OrElseTests`,
+  including a both-block test that wakes on the second alternative's watched
+  variable. NOTE: not yet validated by a local build/test run; commutative
+  operations remain deferred.
 
 ### Fixed
 

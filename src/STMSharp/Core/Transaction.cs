@@ -116,6 +116,47 @@ namespace STMSharp.Core
             throw new TransactionBlockedException();
         }
 
+        public void OrElse(Action<ITransaction> first, Action<ITransaction> second)
+        {
+            ArgumentNullException.ThrowIfNull(first);
+            ArgumentNullException.ThrowIfNull(second);
+
+            // Checkpoint the write set only. If the first alternative blocks, its tentative
+            // writes are rolled back to this point, but its reads are kept so that, if the
+            // second alternative also blocks, the transaction blocks on the union of both
+            // read sets (Haskell-STM orElse semantics). A conflict-driven retry or a user
+            // exception is not caught here and propagates as usual.
+            int writeCheckpoint = _writeCount;
+
+            try
+            {
+                first(this);
+                return; // first completed without blocking: its effects stand
+            }
+            catch (TransactionBlockedException)
+            {
+                // Discard the first alternative's tentative writes; keep its reads.
+                TruncateWritesTo(writeCheckpoint);
+            }
+
+            // Run the second alternative in place of the first. If it blocks, the
+            // TransactionBlockedException propagates to the engine, which parks on the
+            // current read set (first's reads plus second's reads = the union).
+            second(this);
+        }
+
+        // Rolls the write set back to a previous count, used by OrElse to discard a blocked
+        // alternative's tentative writes. Clears the dropped slots so they do not pin values.
+        private void TruncateWritesTo(int count)
+        {
+            for (int i = count; i < _writeCount; i++)
+            {
+                _writeVars![i] = null!;
+                _writeVals![i] = null;
+            }
+            _writeCount = count;
+        }
+
         /// <summary>
         /// Attempts to commit. Returns false if the transaction must be retried.
         /// </summary>
