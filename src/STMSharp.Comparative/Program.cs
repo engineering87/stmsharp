@@ -11,6 +11,9 @@ namespace STMSharp.Comparative
     //     STM, where a lock wins.
     //   - DisjointAccessBenchmark: each thread on its own cell, where a global lock
     //     needlessly serializes independent work and an STM can proceed in parallel.
+    //   - AllocationProfileBenchmark: single-threaded and uncontended, isolating the
+    //     sources of per-transaction allocation (value boxing vs transaction object vs
+    //     buffers) so optimization is driven by data rather than intuition.
     //
     // No third-party STM is referenced; the comparison is deliberately limited to STMSharp
     // and locks.

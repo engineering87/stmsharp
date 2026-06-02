@@ -81,6 +81,13 @@ now the single most valuable remaining piece of technical work.
   so the contended retry loop does not pay a stack unwind. The throwing `Atomic` stays and
   now shares a single non-throwing core. The consistency model describes both outcomes.
   Covered by `TryAtomicTests`. Allocation reduction (below) is the remaining Phase 1 work.
+- Allocation profiling: ADDED (`AllocationProfileBenchmark`, run pending). Single-threaded,
+  uncontended, isolating per-transaction allocation sources: value-type Write (boxing +
+  transaction + buffers + lock plan), reference-type Write (no value boxing), and an
+  empty read-only transaction (base instance + read set). The differences attribute the
+  cost to boxing, to the transaction lifecycle, or to neither. This run decides which
+  allocation source to attack; no pooling/de-boxing change will be made before it,
+  to avoid optimizing blind (two prior performance predictions about commute were wrong).
 
 Each change is measured with the comparative benchmark, before and after, on the same
 machine.

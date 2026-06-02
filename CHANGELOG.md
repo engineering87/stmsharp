@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `AllocationProfileBenchmark` in the comparative project: single-threaded,
+  uncontended, isolating per-transaction allocation sources (value boxing vs the
+  transaction object vs its buffers) so the allocation-reduction work is driven by
+  measurement. Run pending.
 - Exception-free `TryAtomic` surface (void forms return `Task<bool>`; value form
   returns `Task<(bool Committed, TResult Value)>`), reporting budget exhaustion
   through the return value instead of throwing. Shared non-throwing core with
