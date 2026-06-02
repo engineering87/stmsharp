@@ -65,8 +65,10 @@ not claim otherwise.
 
 ## Phase 1: Allocation profile and the exception-free path
 
-Promoted to first because the comparative run identified it as the dominant cost, and
-because it does not change the consistency model, so it is low-risk to land early.
+Promoted to first because all three comparative runs identify allocation as the dominant
+cost (about a 2000x allocation ratio versus a lock, paid with or without contention), and
+because it does not change the consistency model, so it is low-risk to land early. This is
+now the single most valuable remaining piece of technical work.
 
 - Reduce per-attempt allocation. Eliminate boxing in the variable storage, and reuse or
   pool the read and write buffers across retries of the same transaction so that a
@@ -125,10 +127,20 @@ trusted, with particular attention to the conservation invariant under contentio
   statically disjoint access and STMSharp earns its keep on dynamic patterns and
   multi-variable atomicity. Run pending.
 - Re-run the full comparative suite after each of Phases 1 to 3 and record the numbers.
-- Rewrite the README performance section to state the truth the data supports: a lock is
-  faster under single-variable contention; STM earns its place on disjoint-access
-  parallelism and on composability. Remove any unqualified claim of superiority over
-  lock-based approaches.
+  `ContendedCounterBenchmark` measures the contended counter three ways (lock,
+  STMSharp read-modify-write, STMSharp `Commute`). Run completed: on a single
+  contended counter the lock is fastest; STMSharp read-modify-write is about two to
+  three times slower; and `Commute` is the slowest of the three (about eleven times
+  the lock at four threads and over thirty times at sixteen), because the ordered
+  spin-wait that fixed the commute livelock turns heavy single-variable contention
+  into busy-waiting. `Commute` is correct (the conservation invariant holds) but its
+  value is on commutative updates distributed across many variables, not on one hot
+  point. No STM variant beats a lock on a small contended section; this is settled by
+  three independent runs and is reflected in the README.
+- README performance section: REWRITTEN to the truth the data supports. A lock is faster
+  on a small contended section; STMSharp earns its place on composable multi-variable
+  atomicity, blocking composition, and a verified consistency model, not on raw speed. The
+  unqualified superiority claim is removed.
 
 ## Phase 5: Governance and versioning
 

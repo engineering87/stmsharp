@@ -39,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   disabled whenever a commute is present. Covered by `CommuteTests`, including a
   16-thread by 1000-increment conservation invariant. The consistency model gains
   a commute clause. NOTE: not yet validated by a local build/test run.
+- `ContendedCounterBenchmark` now includes a `STMSharp_Commute` variant, so the
+  contended counter is measured three ways on the identical workload: a lock
+  baseline, STMSharp read-modify-write, and STMSharp `Commute`. This is the
+  comparison that should show whether commute makes the contended case
+  competitive. Not yet run.
 
 ### Fixed
 
@@ -60,6 +65,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Rewrote the README performance section to the comparative data: a lock is
+  faster on a small contended section, STMSharp read-modify-write is about two
+  to three times slower, and the commutative path is slowest under single-variable
+  contention. STMSharp's value is composable multi-variable atomicity, blocking
+  composition, and a verified consistency model, not raw speed. The unqualified
+  superiority claim is removed.
 - Rewrote the README to match the current TL2 protocol and the non-generic
   `ITransaction` surface. The previous README still described the superseded
   even/odd version scheme, the generic `Transaction<T>`, `_snapshotVersions`,

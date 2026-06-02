@@ -11,8 +11,10 @@ namespace STMSharp.Comparative
     /// read-modify-write increment of one shared counter, the canonical high-contention
     /// STM workload. Two implementations run the identical workload:
     ///   - a lock-based baseline (lock + plain field), the reference every .NET
-    ///     developer already knows, and
-    ///   - STMSharp transactions.
+    ///     developer already knows,
+    ///   - STMSharp with read-modify-write transactions (the general path), and
+    ///   - STMSharp with Commute (the commutative path, where increments do not
+    ///     conflict logically and only the commit lock is contended).
     ///
     /// The point is not to declare a universal winner from one workload, but to make the
     /// comparison reproducible and to state the method. Each benchmark commits exactly
@@ -92,6 +94,36 @@ namespace STMSharp.Comparative
                         {
                         }
                     }
+                }
+            });
+
+            int final = shared.Read();
+            if (final != Expected)
+                throw new InvalidOperationException($"Lost updates: {final} != {Expected}");
+            return final;
+        }
+
+        // ---- STMSharp using Commute ----
+
+        [Benchmark]
+        public int STMSharp_Commute()
+        {
+            var shared = new STMVariable<int>(0);
+
+            RunThreads(() =>
+            {
+                for (int i = 0; i < IncrementsPerThread; i++)
+                {
+                    // A commuting increment never conflicts logically with another increment,
+                    // so the retry loop is unnecessary; the commit waits for the lock in order
+                    // and then applies the increment to the live committed value.
+                    STMEngine.Atomic(
+                        tx => tx.Commute(shared, x => x + 1),
+                        maxAttempts: 64,
+                        initialBackoffMilliseconds: 0,
+                        maxBackoffMilliseconds: 2,
+                        backoffType: BackoffType.ExponentialWithJitter)
+                        .GetAwaiter().GetResult();
                 }
             });
 

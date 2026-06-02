@@ -189,11 +189,19 @@ When a commit fails because of a conflict, the engine waits before retrying. The
 
 `ExponentialWithJitter` is full-jitter: the delay is uniform in the range up to the capped exponential value, which breaks synchronized retry storms across concurrent transactions.
 
-## Performance benchmarks
+## Performance and when to use STMSharp
 
-Performance is measured with [BenchmarkDotNet](https://benchmarkdotnet.org/), covering execution time, allocations, and GC activity for read and write operations, atomic operations, and the transactional dictionary, across the four backoff strategies.
+Performance is measured with [BenchmarkDotNet](https://benchmarkdotnet.org/), covering execution time, allocations, and GC activity. The comparison is deliberately limited to a lock-based baseline, the reference every .NET developer already knows. The honest summary is that STMSharp does not exist to be faster than a lock on a small, hot critical section, and the measurements bear that out.
 
-See the [full benchmark report](docs/benchmarks/benchmarks.md).
+What the measurements show, on an Intel Core Ultra 7 155H, .NET 10, with sixteen threads each performing a thousand increments:
+
+- On a single, maximally contended counter, a plain `lock` is the fastest option. STMSharp with read-modify-write transactions is roughly two to three times slower, and the commutative path is slower still under that specific contention because every commit must serialize on the same variable. This is the worst case for optimistic STM: there is no disjoint work to parallelize, so the transactional machinery pays its overhead without being able to collect its only advantage.
+- On disjoint access, where each thread works on its own cell, a single global lock needlessly serializes independent work, but STMSharp does not yet beat it either, because the dominant cost is a fixed per-transaction allocation rather than contention. Reducing that allocation is the active area of work (see the roadmap).
+- Across every workload measured, STMSharp allocates substantially more per operation than a lock. This is the property to improve, and it is the reason the library does not currently claim a performance advantage.
+
+So STMSharp earns its place not on raw speed but on what a lock does not give you for free: composable atomic transactions over several variables at once, with automatic conflict detection and retry, blocking composition (`Retry` and `OrElse`), and a declared, verified consistency model (see [the consistency model](docs/consistency-model.md)). If you need many independent locks coordinated correctly, or condition synchronization without hand-ordering locks, that is where it helps. If you need to protect one small hot field, a `lock` is simpler and faster, and you should use it.
+
+The measurement methodology and the roadmap toward a leaner allocation profile are in [the roadmap](docs/roadmap.md). Internal microbenchmarks of the backoff strategies are in the [benchmark report](docs/benchmarks/benchmarks.md).
 
 ## Contributing
 
