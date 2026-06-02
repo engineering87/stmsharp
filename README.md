@@ -107,19 +107,11 @@ A transaction samples a start version, executes the user delegate against a cons
 
 ```mermaid
 flowchart TD
-    A([Atomic block invoked]) --> B[Sample start version<br/>from GlobalVersionClock]
-    B --> C[Execute user delegate]
-    C --> D{Read observes<br/>consistent snapshot?}
-    D -->|No| R[Raise retry signal<br/>unwind delegate]
-    D -->|Yes| E{Write set empty?}
-    E -->|Yes, read-only| K([Commit: no extra work])
-    E -->|No| F[Commit protocol]
-    F --> G{Read set still valid?}
-    G -->|No| R
-    G -->|Yes| H([Publish writes, stamp version])
-    R --> I{Attempts below budget?}
-    I -->|Yes| J[Backoff] --> B
-    I -->|No| X([Throw TransactionConflictException<br/>or return false from TryAtomic])
+    A([Start: sample version, run delegate]) --> B{Snapshot consistent<br/>through commit?}
+    B -->|Yes| C([Publish writes, stamp version])
+    B -->|No| D{Attempts below budget?}
+    D -->|Yes| E[Backoff and retry] --> A
+    D -->|No| F([Fail: throw or return false])
 ```
 
 A read that observes an inconsistent snapshot during execution does not wait. It raises an internal retry signal that unwinds the user delegate, and the engine retries the whole transaction. This is how opacity is preserved.
