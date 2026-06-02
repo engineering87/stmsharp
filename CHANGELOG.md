@@ -7,16 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-06-02
+
 ### Added
 
 - `AllocationProfileBenchmark` in the comparative project: single-threaded,
   uncontended, isolating per-transaction allocation sources (value boxing vs the
   transaction object vs its buffers) so the allocation-reduction work is driven by
-  measurement. Run pending.
+  measurement.
 - Exception-free `TryAtomic` surface (void forms return `Task<bool>`; value form
   returns `Task<(bool Committed, TResult Value)>`), reporting budget exhaustion
   through the return value instead of throwing. Shared non-throwing core with
-  `Atomic`. Covered by `TryAtomicTests`. NOTE: not yet validated locally.
+  `Atomic`. Covered by `TryAtomicTests`.
 - Blocking composition: `ITransaction.Retry()`. A transaction that cannot make
   progress with its current snapshot blocks on its read set and is woken when
   another transaction commits a change to one of those variables, then
@@ -26,9 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one-second safety-valve timeout so a missed wake degrades to a slow retry
   rather than a hang. Blocking does not consume the conflict-retry budget.
   Covered by `RetryTests`, including a one-slot producer/consumer test that
-  fails by timeout if a wake-up is lost. NOTE: not yet validated by a local
-  build/test run; `orElse` and commutative operations are deliberately deferred
-  to follow once `retry` is validated.
+  fails by timeout if a wake-up is lost.
 - Blocking composition: `ITransaction.OrElse(first, second)`. Runs the first
   alternative; if it blocks via `Retry`, its tentative writes are discarded and
   the second runs in its place; if the second also blocks, the transaction
@@ -46,12 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kept disjoint), preserving serializability. The read-set validation skip is
   disabled whenever a commute is present. Covered by `CommuteTests`, including a
   16-thread by 1000-increment conservation invariant. The consistency model gains
-  a commute clause. NOTE: not yet validated by a local build/test run.
+  a commute clause.
 - `ContendedCounterBenchmark` now includes a `STMSharp_Commute` variant, so the
   contended counter is measured three ways on the identical workload: a lock
   baseline, STMSharp read-modify-write, and STMSharp `Commute`. This is the
   comparison that should show whether commute makes the contended case
-  competitive. Not yet run.
+  competitive.
 
 ### Fixed
 
@@ -88,15 +88,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commit), the failure and retry semantics, and the boundaries (mutable
   reference types, direct non-transactional writes, single-flow transactions,
   transactional-dictionary granularity).
-- Added `docs/design-retry-orelse-commute.md`, a design note (not yet
-  implemented) for blocking composition (`retry`, `orElse`) and commutative
+- Added `docs/design-retry-orelse-commute.md`, a design note for blocking composition (`retry`, `orElse`) and commutative
   operations, with the suggested incremental order.
 - Added the `STMSharp.Comparative` benchmark project (registered in the
   solution): a lock-based baseline and an STMSharp contended-counter
   benchmark, running the identical workload and asserting the final total so
   a lossy run fails loudly. The comparison is deliberately limited to STMSharp
   against a lock-based baseline, with no dependency on any third-party STM
-  library. Not yet run; results are pending real hardware.
+  library.
 - Updated `docs/roadmap.md` with the findings of the first comparative run
   (single-counter contention): allocation profile and an exception-free
   budget-exhaustion path promoted to Phase 1, commutative operations tied to
@@ -105,7 +104,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `DisjointAccessBenchmark` to `STMSharp.Comparative`: each thread
   operates on its own cell, contrasting a global lock that serializes
   independent work against STMSharp transactions that commit concurrently.
-  It complements the single-counter worst case. Not yet run.
+  It complements the single-counter worst case.
 
 ### Changed (BREAKING)
 

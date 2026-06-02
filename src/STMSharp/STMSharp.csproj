@@ -22,7 +22,7 @@
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
     <PackageIcon>icon.png</PackageIcon>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
-    <Version>3.0.0-preview.1</Version>
+    <Version>3.0.0</Version>
 
     <!-- Build trust and debuggability -->
     <Deterministic>true</Deterministic>
